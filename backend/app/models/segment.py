@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import String, Text, ForeignKey, DateTime, Float
+from sqlalchemy import String, Text, ForeignKey, DateTime, Float, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -14,16 +14,16 @@ class Segment(Base):
     segment_number: Mapped[int] = mapped_column(nullable=False)
     original_text: Mapped[str] = mapped_column(Text, nullable=False)
     translated_text: Mapped[str | None] = mapped_column(Text, nullable=True)
-    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, server_default="0.0")
     model_used: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    status: Mapped[str] = mapped_column(String(50), default="pending", index=True)
-    qa_score: Mapped[int] = mapped_column(default=0, nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, index=True, server_default="pending")
+    qa_score: Mapped[int] = mapped_column(nullable=False, server_default="0")
     qa_status: Mapped[str | None] = mapped_column(String(50), nullable=True)
     qa_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
-    translation_profile: Mapped[str] = mapped_column(String(50), default="general")
-    tokens_used: Mapped[int] = mapped_column(default=0, nullable=False)
-    latency_ms: Mapped[int] = mapped_column(default=0, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    translation_profile: Mapped[str] = mapped_column(String(50), nullable=False, server_default="general")
+    tokens_used: Mapped[int] = mapped_column(nullable=False, server_default="0")
+    latency_ms: Mapped[int] = mapped_column(nullable=False, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
 
     chapter: Mapped["Chapter"] = relationship(back_populates="segments")

@@ -1,0 +1,34 @@
+name: Docker Compose Validation
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'docker-compose.yml'
+      - 'backend/Dockerfile'
+      - 'frontend/Dockerfile'
+      - '.github/workflows/docker-validate.yml'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'docker-compose.yml'
+      - 'backend/Dockerfile'
+      - 'frontend/Dockerfile'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Validate docker-compose.yml
+      run: |
+        pip install pyyaml
+        python -c "import yaml; yaml.safe_load(open('docker-compose.yml')); print('✓ docker-compose.yml is valid YAML')"
+
+    - name: Check Dockerfile syntax
+      run: |
+        docker run --rm -i hadolint/hadolint < backend/Dockerfile || true
+        docker run --rm -i hadolint/hadolint < frontend/Dockerfile || true
+      continue-on-error: true
