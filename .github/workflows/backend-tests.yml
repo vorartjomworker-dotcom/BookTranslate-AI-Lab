@@ -104,6 +104,7 @@ jobs:
       env:
         DATABASE_URL: postgresql+asyncpg://booktranslate:booktranslate@localhost:5432/booktranslate_test
         REDIS_URL: redis://localhost:6379/0
+        RUN_INTEGRATION_TESTS: "1"
 
     - name: Check module imports
       working-directory: backend

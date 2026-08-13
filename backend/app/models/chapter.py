@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import String, Text, ForeignKey, DateTime, text
+from sqlalchemy import String, Text, ForeignKey, DateTime, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -8,6 +8,9 @@ from app.models.base import Base
 
 class Chapter(Base):
     __tablename__ = "chapters"
+    __table_args__ = (
+        UniqueConstraint("book_id", "chapter_number", name="uq_chapters_book_number"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     book_id: Mapped[int] = mapped_column(ForeignKey("books.id", ondelete="CASCADE"), nullable=False, index=True)
