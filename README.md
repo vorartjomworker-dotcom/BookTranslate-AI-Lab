@@ -118,6 +118,91 @@ npm run dev
 
 See [.env.example](.env.example) for the supported settings.
 
+## Implementation Status
+
+### ✅ Phase 1: Backend Stabilization (Current)
+
+#### Implemented
+- **FastAPI foundation** - Main app with CORS middleware
+- **Database models** - Book, Chapter, Segment models with SQLAlchemy 2.0
+- **Configuration** - Pydantic Settings with environment variable support
+- **Health check endpoint** - `/health` endpoint with database and Redis status
+- **Redis client** - Async Redis connection and health check
+- **Translator worker** - Background worker process with graceful shutdown (placeholder, no AI translation yet)
+- **Alembic migrations** - Database versioning system with initial migration
+- **Testing framework** - pytest with async support
+- **GitHub Actions** - CI/CD pipelines for backend tests, frontend build, and Docker validation
+
+#### Coming Soon (Phase 2)
+- API endpoints for CRUD operations (books, chapters, segments)
+- Document parsing service (DOCX, EPUB)
+- Text segmentation service
+- Translation job models and management
+- QA scoring service
+- AI provider abstraction layer (OpenAI, Anthropic, DeepL)
+- Actual AI translation implementation
+
+### 🚀 Quick Start - Development
+
+#### Backend
+
+```bash
+cd backend
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+
+# Run database migrations
+alembic upgrade head
+
+# Start development server
+uvicorn app.main:app --reload
+```
+
+#### Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+#### Testing
+
+```bash
+cd backend
+pytest tests/ -v
+```
+
+### 🐳 Docker Compose
+
+```bash
+# Copy environment template
+cp .env.example .env
+
+# Start all services
+docker compose up --build
+
+# Verify health
+curl http://localhost:8000/health
+```
+
+## Architecture Notes
+
+### Current Implementation
+- **Backend**: FastAPI with SQLAlchemy async ORM
+- **Database**: PostgreSQL with Alembic migrations
+- **Cache/Queue**: Redis (via async Python client and RQ)
+- **Frontend**: Next.js 15 with React 19 and TypeScript
+- **Workers**: Async background workers for job processing
+
+### Design Decisions
+- Async/await throughout for non-blocking I/O
+- SQLAlchemy 2.0 with type hints for model safety
+- Pydantic v2 for configuration validation
+- Separate worker process for long-running jobs
+- Database migrations versioned with Alembic for team collaboration
+
 ## Roadmap
 
 - Stage 1: document management and parsing

@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.db import check_database, create_tables
+from app.redis_client import check_redis
 
 app = FastAPI(
     title=settings.app_name,
@@ -41,8 +42,15 @@ async def health() -> dict[str, object]:
     except Exception:
         db_ok = False
 
+    try:
+        redis_ok = await check_redis()
+    except Exception:
+        redis_ok = False
+
+    overall_status = "ok" if (db_ok and redis_ok) else "degraded"
+
     return {
-        "status": "ok" if db_ok else "degraded",
+        "status": overall_status,
         "database": db_ok,
-        "redis": True,
+        "redis": redis_ok,
     }
