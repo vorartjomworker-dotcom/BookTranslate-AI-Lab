@@ -1,0 +1,30 @@
+:root {
+  --background: #0b1020;
+  --foreground: #e5ecff;
+  --panel: #111a2d;
+  --accent: #5ea9ff;
+}
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--background);
+  color: var(--foreground);
+  min-height: 100vh;
+}
+
+main {
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+h1 {
+  font-size: 2.5rem;
+  margin-bottom: 0.75rem;
+}
+
+p, li {
+  color: #cdd8f6;
+  line-height: 1.7;
+}

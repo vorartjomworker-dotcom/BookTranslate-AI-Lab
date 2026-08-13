@@ -1,0 +1,81 @@
+services:
+  frontend:
+    build:
+      context: ./frontend
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  backend:
+    build:
+      context: ./backend
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://booktranslate:booktranslate@postgres:5432/booktranslate}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-booktranslate}
+      POSTGRES_USER: ${POSTGRES_USER:-booktranslate}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-booktranslate}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-booktranslate} -d ${POSTGRES_DB:-booktranslate}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  translator-worker:
+    build:
+      context: ./backend
+    command: python -m app.workers.translator_worker
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://booktranslate:booktranslate@postgres:5432/booktranslate}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      DEEPL_API_KEY: ${DEEPL_API_KEY:-}
+      DEFAULT_AI_PROVIDER: ${DEFAULT_AI_PROVIDER:-openai}
+      DEFAULT_AI_MODEL: ${DEFAULT_AI_MODEL:-gpt-4o}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: on-failure
+
+volumes:
+  postgres_data:
+  redis_data:
