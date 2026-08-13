@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import String, Text, ForeignKey, DateTime, Float, text
+from sqlalchemy import String, Text, ForeignKey, DateTime, Float, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -8,6 +8,9 @@ from app.models.base import Base
 
 class Segment(Base):
     __tablename__ = "segments"
+    __table_args__ = (
+        UniqueConstraint("chapter_id", "segment_number", name="uq_segments_chapter_number"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     chapter_id: Mapped[int] = mapped_column(ForeignKey("chapters.id", ondelete="CASCADE"), nullable=False, index=True)
