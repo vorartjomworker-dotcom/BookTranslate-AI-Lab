@@ -263,14 +263,16 @@ async def test_rollback_after_integrity_error() -> None:
             await session.commit()
 
             async with session_factory() as session_two:
+                await session_two.execute(
+                    text(
+                        "INSERT INTO chapters (book_id, chapter_number, title, content, status) VALUES "
+                        "(:book_id, :chapter_number, :title, :content, :status)"
+                    ),
+                    {"book_id": book_id, "chapter_number": 1, "title": "One", "content": "Body", "status": "pending"},
+                )
+                await session_two.commit()
+
                 try:
-                    await session_two.execute(
-                        text(
-                            "INSERT INTO chapters (book_id, chapter_number, title, content, status) VALUES "
-                            "(:book_id, :chapter_number, :title, :content, :status)"
-                        ),
-                        {"book_id": book_id, "chapter_number": 1, "title": "One", "content": "Body", "status": "pending"},
-                    )
                     await session_two.execute(
                         text(
                             "INSERT INTO chapters (book_id, chapter_number, title, content, status) VALUES "
