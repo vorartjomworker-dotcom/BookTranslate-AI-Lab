@@ -56,3 +56,8 @@ class TranslationJob(Base):
         back_populates="retry_of",
         foreign_keys="TranslationJob.retry_of_id",
     )
+    quality_reports: Mapped[list["TranslationQualityReport"]] = relationship(
+        "TranslationQualityReport",
+        back_populates="translation_job",
+        foreign_keys="TranslationQualityReport.translation_job_id",
+    )

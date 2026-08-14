@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import signal
 import sys
@@ -11,11 +12,13 @@ from typing import Any
 
 from redis.asyncio import Redis
 
+from app.ai.exceptions import TranslationError
 from app.ai.translation_service import TranslationService
 from app.ai.types import TranslationRequest
 from app.core.config import settings
 from app.db import async_session_factory
 from app.models import Segment, TranslationJob
+from app.quality.service import QualityAssuranceService
 from app.translation_queue.dispatcher import TranslationJobDispatcher
 
 logging.basicConfig(
@@ -107,17 +110,23 @@ class TranslatorWorker:
                     return
 
                 if status == "queued":
-                    job.queued_at = job.queued_at or datetime.utcnow()
+                    if getattr(job, "queued_at", None) is None:
+                        job.queued_at = datetime.utcnow()
                 elif status == "running":
-                    job.started_at = job.started_at or datetime.utcnow()
-                    job.queued_at = job.queued_at or datetime.utcnow()
+                    if getattr(job, "started_at", None) is None:
+                        job.started_at = datetime.utcnow()
+                    if getattr(job, "queued_at", None) is None:
+                        job.queued_at = datetime.utcnow()
                 elif status == "completed":
-                    job.completed_at = job.completed_at or datetime.utcnow()
+                    if getattr(job, "completed_at", None) is None:
+                        job.completed_at = datetime.utcnow()
                     job.error_code = None
                     job.error_message = None
                 elif status == "failed":
-                    job.failed_at = job.failed_at or datetime.utcnow()
-                    job.error_code = job.error_code or "worker_failed"
+                    if getattr(job, "failed_at", None) is None:
+                        job.failed_at = datetime.utcnow()
+                    if getattr(job, "error_code", None) is None:
+                        job.error_code = "worker_failed"
 
                 job.status = status
                 if error is not None:
@@ -153,12 +162,29 @@ class TranslatorWorker:
                 if segment is None:
                     raise RuntimeError("segment not found")
 
+                job = await session.get(TranslationJob, job_id) if job_id is not None else None
+
+                # Duplicate delivery of an already-completed job: no re-translation, no second QA report.
+                if job is not None and job.status == "completed":
+                    return {
+                        "job_id": job_id,
+                        "segment_id": segment_id,
+                        "status": "completed",
+                        "provider": provider,
+                        "duplicate": True,
+                        "qa_score": segment.qa_score,
+                        "qa_status": segment.qa_status,
+                    }
+
                 partial_result: dict[str, Any] = {
                     "job_id": job_id,
                     "segment_id": segment_id,
                     "status": "running",
                     "provider": provider,
                 }
+
+                # Step 1: AI translation. Provider/business failures are legitimate, non-retryable
+                # outcomes here -- they are recorded and acknowledged, not treated as persistence errors.
                 try:
                     service = TranslationService(settings_obj=settings)
                     result_model = await service.translate(
@@ -171,43 +197,31 @@ class TranslatorWorker:
                             profile="general",
                         )
                     )
-                    segment.translated_text = result_model.translated_text
-                    segment.model_used = result_model.model or provider
-                    segment.status = "translated"
-                    segment.confidence = result_model.confidence if result_model.confidence is not None else segment.confidence
-                    segment.tokens_used = int(result_model.total_tokens or segment.tokens_used)
-                    segment.latency_ms = int(result_model.latency_ms or segment.latency_ms)
-                    if job_id is not None:
-                        job = await session.get(TranslationJob, job_id)
-                        if job is not None:
-                            job.status = "completed"
-                            job.error_code = None
-                            job.error_message = None
-                            job.completed_at = datetime.utcnow()
-                    await session.commit()
-                    partial_result.update({
-                        "status": "completed",
-                        "translated_text": result_model.translated_text,
-                        "provider": result_model.provider,
-                        "model": result_model.model,
-                        "tokens_used": result_model.total_tokens,
-                        "latency_ms": result_model.latency_ms,
-                    })
-                    result.update(partial_result)
-                    return partial_result
                 except asyncio.CancelledError:
                     raise
-                except Exception as exc:  # pragma: no cover - safety net for real worker execution
-                    logger.exception("Translation failed for segment %s", segment_id)
-                    if job_id is not None:
-                        job = await session.get(TranslationJob, job_id)
+                except TranslationError as exc:
+                    logger.warning("Translation failed for segment %s: %s", segment_id, exc)
+                    await session.rollback()
+                    try:
                         if job is not None:
                             job.status = "failed"
                             job.error_message = str(exc)
                             job.error_code = getattr(exc, "code", exc.__class__.__name__)
                             job.failed_at = datetime.utcnow()
-                    segment.status = "failed"
-                    await session.commit()
+                            await session.commit()
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as persistence_exc:  # pragma: no cover - real DB outage
+                        logger.exception("Could not persist failed translation job %s", job_id)
+                        await session.rollback()
+                        partial_result.update({
+                            "status": "failed",
+                            "message": str(persistence_exc),
+                            "error_code": persistence_exc.__class__.__name__,
+                            "persistence_error": True,
+                        })
+                        result.update(partial_result)
+                        return partial_result
                     partial_result.update({
                         "status": "failed",
                         "message": str(exc),
@@ -215,6 +229,69 @@ class TranslatorWorker:
                     })
                     result.update(partial_result)
                     return partial_result
+
+                # Steps 2-4: update Segment -> QA report -> update TranslationJob, all in one
+                # transaction. Any failure here (including QA persistence failures) rolls back and
+                # is surfaced as a persistence error so the caller does not XACK the message.
+                try:
+                    segment.translated_text = result_model.translated_text
+                    segment.model_used = result_model.model or provider
+                    segment.confidence = result_model.confidence if result_model.confidence is not None else segment.confidence
+                    segment.tokens_used = int(result_model.total_tokens or segment.tokens_used)
+                    segment.latency_ms = int(result_model.latency_ms or segment.latency_ms)
+
+                    quality_service = QualityAssuranceService(session)
+                    quality_report = await quality_service.evaluate_segment(
+                        segment_id,
+                        source_text=segment.original_text,
+                        translated_text=result_model.translated_text,
+                        provider=provider,
+                        model=result_model.model or settings.default_ai_model,
+                        source_language=source_language,
+                        target_language=target_language,
+                        translation_job_id=job_id,
+                    )
+
+                    # A low/failed QA score is informational only; it never triggers an automatic
+                    # (paid) retranslation. The job is considered complete once translated.
+                    segment.status = "translated"
+                    if job is not None:
+                        job.status = "completed"
+                        job.error_code = None
+                        job.error_message = None
+                        job.completed_at = datetime.utcnow()
+
+                    await session.commit()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    logger.exception("Could not persist translation/QA result for segment %s", segment_id)
+                    await session.rollback()
+                    try:
+                        await self._mark_job_state(job_id=job_id, status="failed", error=str(exc))
+                    except Exception:  # pragma: no cover - best effort only
+                        logger.warning("Could not record failure state for job %s", job_id)
+                    partial_result.update({
+                        "status": "failed",
+                        "message": str(exc),
+                        "error_code": getattr(exc, "code", exc.__class__.__name__),
+                        "persistence_error": True,
+                    })
+                    result.update(partial_result)
+                    return partial_result
+
+                partial_result.update({
+                    "status": "completed",
+                    "translated_text": result_model.translated_text,
+                    "provider": result_model.provider,
+                    "model": result_model.model,
+                    "tokens_used": result_model.total_tokens,
+                    "latency_ms": result_model.latency_ms,
+                    "qa_score": quality_report.score,
+                    "qa_status": quality_report.status,
+                })
+                result.update(partial_result)
+                return partial_result
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # pragma: no cover - DB connectivity safety net for unit tests / watchdogs
@@ -223,6 +300,7 @@ class TranslatorWorker:
                 "status": "failed",
                 "message": str(exc),
                 "error_code": exc.__class__.__name__,
+                "persistence_error": True,
             })
             if job_id is not None:
                 await self._mark_job_state(job_id=job_id, status="failed", error=str(exc))
@@ -339,7 +417,8 @@ class TranslatorWorker:
                             logger.exception("Processing job %s failed; leaving message unacked for redelivery", message_id)
                             continue
 
-                        if self.redis is not None and message_id and result.get("status") in {"completed", "failed"}:
+                        should_ack = result.get("status") in {"completed", "failed"} and not result.get("persistence_error")
+                        if self.redis is not None and message_id and should_ack:
                             await self.redis.xack(settings.translation_stream_name, settings.translation_consumer_group, message_id)
                         logger.info("Completed job: %s", result)
                 except asyncio.CancelledError:

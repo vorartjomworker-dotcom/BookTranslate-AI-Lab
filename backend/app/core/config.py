@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from pydantic import ValidationInfo, field_validator
+from pydantic import ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -48,6 +48,16 @@ class Settings(BaseSettings):
 
     qa_enabled: bool = True
     auto_approve_threshold: int = 95
+    quality_ai_enabled: bool = False
+    quality_ai_provider: str | None = None
+    quality_evaluator_version: str = "1.0.0"
+    quality_pass_threshold: int = 85
+    quality_review_threshold: int = 60
+    quality_auto_approve_threshold: int | None = None
+    quality_min_score: int | None = None
+    quality_failure_threshold: int | None = None
+    quality_deterministic_weight: float = 0.8
+    quality_ai_weight: float = 0.2
 
     default_source_language: str = "en"
     default_target_language: str = "ru"
@@ -90,6 +100,42 @@ class Settings(BaseSettings):
         if value <= 0:
             raise ValueError(f"{info.field_name} must be greater than 0")
         return value
+
+    @model_validator(mode="after")
+    def validate_quality_thresholds(self) -> "Settings":
+        explicit = set(self.model_fields_set)
+        new_thresholds_explicit = {"quality_pass_threshold", "quality_review_threshold"} & explicit
+        legacy_thresholds_explicit = {
+            "quality_auto_approve_threshold",
+            "quality_min_score",
+            "quality_failure_threshold",
+        } & explicit
+
+        if new_thresholds_explicit:
+            pass_threshold = self.quality_pass_threshold
+            review_threshold = self.quality_review_threshold
+        elif legacy_thresholds_explicit:
+            pass_threshold = self.quality_auto_approve_threshold if self.quality_auto_approve_threshold is not None else self.quality_pass_threshold
+            review_threshold = self.quality_min_score if self.quality_min_score is not None else self.quality_review_threshold
+            self.quality_pass_threshold = pass_threshold
+            self.quality_review_threshold = review_threshold
+        else:
+            pass_threshold = self.quality_pass_threshold
+            review_threshold = self.quality_review_threshold
+
+        if not (0 <= review_threshold < pass_threshold <= 100):
+            raise ValueError("quality thresholds must satisfy 0 <= quality_review_threshold < quality_pass_threshold <= 100")
+
+        self.quality_auto_approve_threshold = pass_threshold
+        self.quality_min_score = review_threshold
+        self.quality_failure_threshold = max(0, review_threshold - 1)
+
+        total = self.quality_deterministic_weight + self.quality_ai_weight
+        if not (0.0 <= self.quality_deterministic_weight <= 1.0 and 0.0 <= self.quality_ai_weight <= 1.0):
+            raise ValueError("quality weights must be between 0 and 1")
+        if abs(total - 1.0) > 1e-9:
+            raise ValueError("quality deterministic and AI weights must sum to 1")
+        return self
 
     @property
     def upload_dir_path(self) -> Path:

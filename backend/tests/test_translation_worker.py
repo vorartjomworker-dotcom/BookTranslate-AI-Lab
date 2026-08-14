@@ -53,7 +53,7 @@ async def test_process_translation_job_uses_default_ai_provider(monkeypatch):
     worker = TranslatorWorker()
 
     class FakeTranslationResult:
-        translated_text = "hello"
+        translated_text = "hola"
         provider = "openai"
         model = "gpt-4o"
         confidence = 0.98
@@ -64,6 +64,16 @@ async def test_process_translation_job_uses_default_ai_provider(monkeypatch):
         async def translate(self, request):
             return FakeTranslationResult()
 
+    class FakeQueryResult:
+        def scalars(self):
+            return self
+
+        def first(self):
+            return None
+
+        def all(self):
+            return []
+
     class FakeSession:
         async def __aenter__(self):
             return self
@@ -71,9 +81,24 @@ async def test_process_translation_job_uses_default_ai_provider(monkeypatch):
         async def __aexit__(self, exc_type, exc, tb):
             return False
 
+        async def execute(self, stmt):
+            return FakeQueryResult()
+
+        def add(self, obj):
+            return None
+
+        def add_all(self, objs):
+            return None
+
+        async def flush(self):
+            return None
+
+        async def delete(self, obj):
+            return None
+
         async def get(self, model, key):
             if model.__name__ == "Segment":
-                return type("Segment", (), {"original_text": "hello", "translated_text": None, "status": "pending", "model_used": None, "confidence": None, "tokens_used": None, "latency_ms": None})()
+                return type("Segment", (), {"original_text": "hello", "translated_text": None, "status": "pending", "model_used": None, "confidence": None, "tokens_used": None, "latency_ms": None, "qa_score": 0, "qa_status": "pending", "qa_comment": ""})()
             if model.__name__ == "TranslationJob":
                 return type("TranslationJob", (), {"status": "queued", "error_message": None, "error_code": None, "completed_at": None, "failed_at": None})()
             return None
