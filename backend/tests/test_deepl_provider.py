@@ -9,6 +9,7 @@ from app.ai.exceptions import (
     InvalidTranslationResponseError,
     ProviderAuthenticationError,
     ProviderConfigurationError,
+    ProviderQuotaExceededError,
     ProviderRateLimitError,
     ProviderTimeoutError,
     ProviderUnavailableError,
@@ -60,7 +61,7 @@ async def test_deepl_provider_uses_free_and_pro_endpoints_and_request_fields():
     assert free_client.calls[0]["headers"]["Authorization"] == "DeepL-Auth-Key key"
     assert free_client.calls[0]["data"]["source_lang"] == "EN"
     assert free_client.calls[0]["data"]["target_lang"] == "RU"
-    assert "Translate only the provided text" in free_client.calls[0]["data"]["text"][0]
+    assert free_client.calls[0]["data"]["text"][0] == "Hello"
 
     pro_client = FakeAsyncClient(response=response)
     pro_provider = DeepLProvider(api_key="key", use_pro=True, client_factory=lambda **kwargs: pro_client)
@@ -70,6 +71,7 @@ async def test_deepl_provider_uses_free_and_pro_endpoints_and_request_fields():
     assert pro_client.calls[0]["headers"]["Authorization"] == "DeepL-Auth-Key key"
     assert pro_client.calls[0]["data"]["source_lang"] == "EN"
     assert pro_client.calls[0]["data"]["target_lang"] == "RU"
+    assert pro_client.calls[0]["data"]["text"][0] == "Hello"
 
 
 @pytest.mark.asyncio
@@ -104,7 +106,7 @@ async def test_deepl_provider_auth_rate_limit_and_errors():
     for code in (456, 500, 502, 503):
         provider = DeepLProvider(api_key="key", client_factory=lambda **kwargs: FakeAsyncClient(response=httpx.Response(code, json={"message": "error"})))
         if code == 456:
-            with pytest.raises(InvalidTranslationResponseError):
+            with pytest.raises(ProviderQuotaExceededError):
                 await provider.translate(TranslationRequest(text="Hello", source_language="en", target_language="ru"))
         else:
             with pytest.raises(ProviderUnavailableError):

@@ -8,7 +8,7 @@ import time
 from typing import Awaitable, Callable
 
 from app.ai.base import TranslationProvider
-from app.ai.exceptions import TranslationError, ProviderConfigurationError
+from app.ai.exceptions import ProviderConfigurationError, ProviderTimeoutError, TranslationError
 from app.ai.registry import ProviderRegistry
 from app.ai.types import TranslationRequest, TranslationResult
 from app.core.config import settings
@@ -49,11 +49,12 @@ class TranslationService:
         payload = TranslationRequest.model_validate(request.model_dump())
         provider = self._provider_factory(payload)
         last_error: Exception | None = None
+        timeout_seconds = float(getattr(self.settings, "translation_timeout", 30))
 
         for attempt in range(self.max_retries + 1):
             try:
                 started = time.perf_counter()
-                result = await provider.translate(payload)
+                result = await asyncio.wait_for(provider.translate(payload), timeout=timeout_seconds)
                 latency_ms = int((time.perf_counter() - started) * 1000)
                 if result.latency_ms == 0:
                     result.latency_ms = latency_ms
@@ -70,6 +71,25 @@ class TranslationService:
                 return result
             except asyncio.CancelledError:
                 raise
+            except asyncio.TimeoutError as exc:
+                last_error = ProviderTimeoutError(
+                    "Translation provider timed out.",
+                    provider=getattr(provider, "name", None),
+                    details={"timeout_seconds": timeout_seconds},
+                )
+                if attempt >= self.max_retries:
+                    raise last_error from exc
+                delay = self._build_retry_delay(attempt + 1)
+                logger.warning(
+                    "translation retry provider=%s code=%s attempt=%s delay=%.2f",
+                    getattr(provider, "name", payload.provider or "unknown"),
+                    last_error.code,
+                    attempt + 1,
+                    delay,
+                )
+                sleep_result = self.sleep_fn(delay)
+                if inspect.isawaitable(sleep_result):
+                    await sleep_result
             except TranslationError as exc:
                 last_error = exc
                 if not exc.retryable or attempt >= self.max_retries:
@@ -87,14 +107,23 @@ class TranslationService:
                     await sleep_result
             except Exception as exc:  # pragma: no cover - safety wrap for unexpected non-translation errors
                 last_error = TranslationError(
-                    str(exc),
+                    "The translation provider encountered an unexpected error.",
                     code="provider_unavailable_error",
                     provider=getattr(provider, "name", None),
                     retryable=True,
+                    details={"error_type": type(exc).__name__},
                 )
                 if attempt >= self.max_retries:
-                    raise last_error
+                    raise last_error from exc
                 delay = self._build_retry_delay(attempt + 1)
+                logger.warning(
+                    "translation retry provider=%s code=%s attempt=%s delay=%.2f error_type=%s",
+                    getattr(provider, "name", payload.provider or "unknown"),
+                    last_error.code,
+                    attempt + 1,
+                    delay,
+                    type(exc).__name__,
+                )
                 sleep_result = self.sleep_fn(delay)
                 if inspect.isawaitable(sleep_result):
                     await sleep_result
