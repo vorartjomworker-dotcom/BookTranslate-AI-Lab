@@ -12,7 +12,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.v1.router import api_router
 from app.core.config import settings
-from app.core.exceptions import APIError, ConflictError, NotFoundError
+from app.core.exceptions import APIError, ConflictError, NotFoundError, PayloadTooLargeError, UnsupportedMediaTypeError
 from app.db import check_database
 from app.redis_client import check_redis
 
@@ -89,6 +89,18 @@ async def api_error_handler(request: Request, exc: APIError) -> JSONResponse:
     return JSONResponse(status_code=exc.http_status, content=exc.to_dict(request_id))
 
 
+@app.exception_handler(PayloadTooLargeError)
+async def payload_too_large_exception_handler(request: Request, exc: PayloadTooLargeError) -> JSONResponse:
+    request_id = getattr(request.state, "request_id", uuid4().hex)
+    return JSONResponse(status_code=413, content=exc.to_dict(request_id))
+
+
+@app.exception_handler(UnsupportedMediaTypeError)
+async def unsupported_media_type_exception_handler(request: Request, exc: UnsupportedMediaTypeError) -> JSONResponse:
+    request_id = getattr(request.state, "request_id", uuid4().hex)
+    return JSONResponse(status_code=415, content=exc.to_dict(request_id))
+
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
     request_id = getattr(request.state, "request_id", uuid4().hex)
@@ -111,6 +123,20 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
         content={
             "code": "internal_server_error",
             "message": "Internal server error.",
+            "details": {},
+            "request_id": request_id,
+        },
+    )
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+    request_id = getattr(request.state, "request_id", uuid4().hex)
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "code": "http_error",
+            "message": exc.detail if hasattr(exc, "detail") else exc.__class__.__name__,
             "details": {},
             "request_id": request_id,
         },

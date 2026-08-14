@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, Depends, File, Form, Query, Response, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.exceptions import ValidationError
 from app.core.pagination import MAX_PAGE_SIZE, build_paginated_response, normalize_pagination
 from app.dependencies.db import get_db
+from app.document.ingestion_service import DocumentIngestionService
 from app.models import Book, Chapter
 from app.schemas.book import BookCreate, BookRead, BookUpdate
 from app.services.book_service import BookService
@@ -30,6 +33,7 @@ async def get_book(book_id: int, db: AsyncSession = Depends(get_db)) -> BookRead
     service = BookService(db)
     item = await service.get_book(book_id)
     return BookRead.model_validate(item)
+
 
 
 @router.post("", response_model=BookRead, status_code=status.HTTP_201_CREATED)
@@ -78,4 +82,25 @@ async def list_book_chapters(
         total,
         page=page,
         page_size=page_size,
+    )
+
+
+@router.post("/upload", status_code=status.HTTP_201_CREATED)
+async def upload_book_document(
+    file: UploadFile = File(...),
+    title: str | None = Form(default=None),
+    author: str | None = Form(default=None),
+    language: str | None = Form(default=None),
+    description: str | None = Form(default=None),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    if file is None:
+        raise ValidationError("A file upload is required.")
+    service = DocumentIngestionService(db)
+    return await service.ingest_upload(
+        upload=file,
+        title=title,
+        author=author,
+        language=language,
+        description=description,
     )
