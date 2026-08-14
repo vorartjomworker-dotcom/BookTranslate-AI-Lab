@@ -843,12 +843,13 @@ async def test_legacy_segment_fields_rollback_to_previous_state() -> None:
             segment.qa_status = "failed"
             await session.commit()
 
+            segment_id = segment.id
             previous_score = segment.qa_score
             previous_status = segment.qa_status
 
             try:
                 report = TranslationQualityReport(
-                    segment_id=segment.id,
+                    segment_id=segment_id,
                     evaluator_version="1.0.0",
                     mode="deterministic",
                     deterministic_score=90,
@@ -867,8 +868,13 @@ async def test_legacy_segment_fields_rollback_to_previous_state() -> None:
             except RuntimeError:
                 await session.rollback()
 
-            assert segment.qa_score == previous_score
-            assert segment.qa_status == previous_status
+            persisted = await session.execute(
+                text("SELECT qa_score, qa_status FROM segments WHERE id = :segment_id"),
+                {"segment_id": segment_id},
+            )
+            persisted_score, persisted_status = persisted.one()
+            assert persisted_score == previous_score
+            assert persisted_status == previous_status
     finally:
         await engine.dispose()
 
