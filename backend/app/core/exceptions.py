@@ -60,3 +60,23 @@ class ValidationError(APIError):
             http_status=422,
             details=details or {},
         )
+
+
+class PayloadTooLargeError(APIError):
+    def __init__(self, message: str, *, details: Mapping[str, Any] | None = None) -> None:
+        super().__init__(
+            message,
+            code="payload_too_large",
+            http_status=413,
+            details=details or {},
+        )
+
+
+class UnsupportedMediaTypeError(APIError):
+    def __init__(self, message: str, *, details: Mapping[str, Any] | None = None) -> None:
+        super().__init__(
+            message,
+            code="unsupported_media_type",
+            http_status=415,
+            details=details or {},
+        )

@@ -16,8 +16,11 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://booktranslate:booktranslate@postgres:5432/booktranslate}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      UPLOAD_DIR: ${UPLOAD_DIR:-/var/lib/booktranslate/uploads}
     ports:
       - "8000:8000"
+    volumes:
+      - uploads_data:/var/lib/booktranslate/uploads
     depends_on:
       postgres:
         condition: service_healthy
@@ -69,6 +72,9 @@ services:
       DEEPL_API_KEY: ${DEEPL_API_KEY:-}
       DEFAULT_AI_PROVIDER: ${DEFAULT_AI_PROVIDER:-openai}
       DEFAULT_AI_MODEL: ${DEFAULT_AI_MODEL:-gpt-4o}
+      UPLOAD_DIR: ${UPLOAD_DIR:-/var/lib/booktranslate/uploads}
+    volumes:
+      - uploads_data:/var/lib/booktranslate/uploads
     depends_on:
       postgres:
         condition: service_healthy
@@ -79,3 +85,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  uploads_data:

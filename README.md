@@ -120,27 +120,63 @@ See [.env.example](.env.example) for the supported settings.
 
 ## Implementation Status
 
-### ✅ Phase 1: Backend Stabilization (Current)
+### ✅ Document ingestion and API persistence
 
 #### Implemented
-- **FastAPI foundation** - Main app with CORS middleware
-- **Database models** - Book, Chapter, Segment models with SQLAlchemy 2.0
-- **Configuration** - Pydantic Settings with environment variable support
+- **FastAPI CRUD API** for books, chapters, and segments
+- **DOCX and EPUB ingestion** with validation, parsing, segmentation, and persistence
+- **Safe file storage** using UUID keys and chunked writes under the configured upload directory
+- **Archive validation** for ZIP safety, entry-count caps, uncompressed size caps, and traversal protection
+- **Transactional persistence** for Book, Chapter, and Segment rows with rollback on failures
 - **Health check endpoint** - `/health` endpoint with database and Redis status
-- **Redis client** - Async Redis connection and health check
-- **Translator worker** - Background worker process with graceful shutdown (placeholder, no AI translation yet)
-- **Alembic migrations** - Database versioning system with initial migration
 - **Testing framework** - pytest with async support
-- **GitHub Actions** - CI/CD pipelines for backend tests, frontend build, and Docker validation
 
-#### Coming Soon (Phase 2)
-- API endpoints for CRUD operations (books, chapters, segments)
-- Document parsing service (DOCX, EPUB)
-- Text segmentation service
-- Translation job models and management
-- QA scoring service
-- AI provider abstraction layer (OpenAI, Anthropic, DeepL)
-- Actual AI translation implementation
+#### Not implemented yet
+- **AI translation** through OpenAI/Anthropic/DeepL is not yet active
+- **Redis worker translation jobs** remain a future phase
+- **Frontend upload UI** is not part of this backend-only ingestion work
+
+## API usage
+
+### Upload a document
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/books/upload" \
+  -F "file=@/path/to/chapter.docx" \
+  -F "title=Example Book" \
+  -F "author=Jane Author" \
+  -F "language=en" \
+  -F "description=Example description"
+```
+
+Supported extensions:
+- `.docx`
+- `.epub`
+
+Maximum upload size: 25 MB
+
+Success response example:
+
+```json
+{
+  "book": {
+    "id": 1,
+    "title": "Example Book",
+    "author": "Jane Author",
+    "file_path": "9f1d1a6b6d514c45af4d2f8d4fdbaf18.docx",
+    "file_type": "docx",
+    "language": "en",
+    "status": "parsed"
+  },
+  "chapters_count": 2,
+  "segments_count": 12
+}
+```
+
+Possible error responses:
+- `413` payload_too_large for oversized uploads
+- `415` unsupported_media_type for unsupported extensions
+- `422` validation_error for empty or invalid files, traversal issues, or unreadable documents
 
 ### 🚀 Quick Start - Development
 

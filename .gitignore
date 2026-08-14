@@ -29,3 +29,5 @@ Thumbs.db
 postgres_data/
 redis_data/
 uploaded_files/
+uploads/
+*.part
