@@ -72,6 +72,10 @@ services:
       DEEPL_API_KEY: ${DEEPL_API_KEY:-}
       DEFAULT_AI_PROVIDER: ${DEFAULT_AI_PROVIDER:-openai}
       DEFAULT_AI_MODEL: ${DEFAULT_AI_MODEL:-gpt-4o}
+      TRANSLATION_STREAM_NAME: ${TRANSLATION_STREAM_NAME:-translation_jobs}
+      TRANSLATION_CONSUMER_GROUP: ${TRANSLATION_CONSUMER_GROUP:-translation-workers}
+      TRANSLATION_DLQ_STREAM_NAME: ${TRANSLATION_DLQ_STREAM_NAME:-translation_jobs_dlq}
+      TRANSLATION_CONSUMER_NAME: ${TRANSLATION_CONSUMER_NAME:-translator-worker-1}
       UPLOAD_DIR: ${UPLOAD_DIR:-/var/lib/booktranslate/uploads}
     volumes:
       - uploads_data:/var/lib/booktranslate/uploads

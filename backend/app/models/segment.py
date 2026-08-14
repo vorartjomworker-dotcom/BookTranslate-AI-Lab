@@ -30,3 +30,7 @@ class Segment(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
 
     chapter: Mapped["Chapter"] = relationship(back_populates="segments")
+    translation_jobs: Mapped[list["TranslationJob"]] = relationship(
+        back_populates="segment",
+        cascade="all, delete-orphan",
+    )

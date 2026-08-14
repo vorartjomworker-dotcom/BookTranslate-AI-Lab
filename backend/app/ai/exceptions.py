@@ -62,3 +62,14 @@ class InvalidTranslationRequestError(TranslationError):
 class InvalidTranslationResponseError(TranslationError):
     def __init__(self, message: str, *, provider: str | None = None, details: dict[str, Any] | None = None) -> None:
         super().__init__(message, code="invalid_translation_response_error", provider=provider, retryable=False, details=details)
+
+
+class ProviderQuotaExceededError(TranslationError):
+    def __init__(self, message: str, *, provider: str | None = None, details: dict[str, Any] | None = None) -> None:
+        super().__init__(
+            message,
+            code="provider_quota_exceeded_error",
+            provider=provider,
+            retryable=False,
+            details=details,
+        )

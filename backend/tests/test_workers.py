@@ -44,17 +44,23 @@ def test_translator_worker_instantiation() -> None:
     assert worker.should_exit is False
 
 
+def test_translation_job_model_import() -> None:
+    """Test that the durable translation job model is available."""
+    from app.models import TranslationJob
+
+    assert TranslationJob is not None
+
+
 @pytest.mark.asyncio
-async def test_translator_worker_placeholder() -> None:
-    """Test translator worker placeholder job processing."""
+async def test_translator_worker_processes_job_metadata() -> None:
+    """Test worker job processing returns clear metadata for a tracked job."""
     from app.workers.translator_worker import TranslatorWorker
 
     worker = TranslatorWorker()
-    result = await worker.process_translation_job(segment_id=1)
+    result = await worker.process_translation_job(segment_id=1, job_id=99)
 
     assert result is not None
     assert isinstance(result, dict)
-    assert "status" in result
-    assert result["status"] == "pending"
-    assert "segment_id" in result
     assert result["segment_id"] == 1
+    assert result["job_id"] == 99
+    assert result["status"] in {"queued", "running", "completed", "failed"}

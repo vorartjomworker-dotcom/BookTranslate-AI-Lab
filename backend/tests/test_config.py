@@ -46,3 +46,11 @@ def test_settings_language_defaults() -> None:
     """Test default language settings."""
     assert settings.default_source_language is not None
     assert settings.default_target_language is not None
+
+
+def test_settings_translation_queue_defaults() -> None:
+    """Test the Redis Streams queue configuration is present."""
+    assert settings.translation_stream_name
+    assert settings.translation_consumer_group
+    assert settings.translation_dlq_stream_name
+    assert settings.translation_job_retry_limit >= 0

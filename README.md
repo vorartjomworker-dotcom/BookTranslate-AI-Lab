@@ -15,7 +15,7 @@ This project is designed to support a complete workflow:
 
 ## AI Translation Layer
 
-PR #4 introduces a provider abstraction for translation work without connecting it to the Redis queue or automatic bulk translation flow.
+PR #5 adds a durable translation job orchestration layer on top of the provider abstraction from PR #4. The queue is intentionally lightweight: PostgreSQL owns the job state, while Redis Streams carries only the minimal work payload for async execution.
 
 ### Supported providers
 - OpenAI via async client with optional `OPENAI_BASE_URL` override for OpenAI-compatible APIs
@@ -28,6 +28,8 @@ PR #4 introduces a provider abstraction for translation work without connecting 
 - Provider selection is explicit and lazy
 - No automatic fallback across paid providers
 - Timeout and retry are handled centrally in `TranslationService`
+- PostgreSQL keeps the source-of-truth job status and denies duplicate active jobs per segment
+- Redis Streams provides a consumer-group queue with DLQ-friendly handling for retries and poison messages
 - API keys remain environment-only values and are never logged or exposed in errors
 
 ## Architecture
@@ -151,7 +153,7 @@ TRANSLATION_TIMEOUT=30
 MAX_RETRIES=3
 ```
 
-PR #4 implements the provider abstraction and translation service. PR #5 will connect this engine to the Redis worker and orchestration layer.
+PR #5 implements the queue orchestration layer: segment translation jobs are persisted in PostgreSQL, queued to a Redis Streams consumer group, and processed by the async translator worker. The worker records durable job status and updates segment translation fields only after provider success.
 
 ## Implementation Status
 
