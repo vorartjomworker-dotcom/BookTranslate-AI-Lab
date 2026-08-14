@@ -3,6 +3,7 @@ from app.models.book import Book
 from app.models.chapter import Chapter
 from app.models.segment import Segment
 from app.models.translation_job import TranslationJob
+from app.models.translation_quality_report import TranslationQualityReport
 
 __all__ = [
     "Base",
@@ -10,4 +11,5 @@ __all__ = [
     "Chapter",
     "Segment",
     "TranslationJob",
+    "TranslationQualityReport",
 ]

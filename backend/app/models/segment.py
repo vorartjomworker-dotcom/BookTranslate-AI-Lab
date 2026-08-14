@@ -20,6 +20,7 @@ class Segment(Base):
     confidence: Mapped[float] = mapped_column(Float, nullable=False, server_default="0.0")
     model_used: Mapped[str | None] = mapped_column(String(100), nullable=True)
     status: Mapped[str] = mapped_column(String(50), nullable=False, index=True, server_default="pending")
+    # Deprecated: TranslationQualityReport is the source of truth for translation QA state.
     qa_score: Mapped[int] = mapped_column(nullable=False, server_default="0")
     qa_status: Mapped[str | None] = mapped_column(String(50), nullable=True)
     qa_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -31,6 +32,10 @@ class Segment(Base):
 
     chapter: Mapped["Chapter"] = relationship(back_populates="segments")
     translation_jobs: Mapped[list["TranslationJob"]] = relationship(
+        back_populates="segment",
+        cascade="all, delete-orphan",
+    )
+    quality_reports: Mapped[list["TranslationQualityReport"]] = relationship(
         back_populates="segment",
         cascade="all, delete-orphan",
     )
