@@ -81,7 +81,8 @@ async def test_document_ingestion_transaction_persists_and_rolls_back() -> None:
             await session.execute(text("DELETE FROM books WHERE id = :book_id"), {"book_id": book.id})
             await session.commit()
 
-            assert await session.execute(text("SELECT COUNT(*) FROM books")).scalar_one() == 0
+            result = await session.execute(text("SELECT COUNT(*) FROM books"))
+            assert result.scalar_one() == 0
     finally:
         await engine.dispose()
 
@@ -121,8 +122,10 @@ async def test_document_ingestion_rollback_cleans_partial_rows_and_file() -> Non
                 await session.flush()
 
                 await session.rollback()
-                assert await session.execute(text("SELECT COUNT(*) FROM books")).scalar_one() == 0
-                assert await session.execute(text("SELECT COUNT(*) FROM chapters")).scalar_one() == 0
+                books_result = await session.execute(text("SELECT COUNT(*) FROM books"))
+                chapters_result = await session.execute(text("SELECT COUNT(*) FROM chapters"))
+                assert books_result.scalar_one() == 0
+                assert chapters_result.scalar_one() == 0
             finally:
                 storage.cleanup(file_name)
                 assert not final_path.exists()
