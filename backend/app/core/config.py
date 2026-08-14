@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -18,9 +19,10 @@ class Settings(BaseSettings):
 
     openai_api_key: str = ""
     openai_model: str = "gpt-4o"
+    openai_base_url: str | None = None
 
     anthropic_api_key: str = ""
-    anthropic_model: str = "claude-3-opus-20240229"
+    anthropic_model: str = "claude-3-5-sonnet-20240620"
 
     deepl_api_key: str = ""
     deepl_use_pro: bool = False
@@ -39,6 +41,29 @@ class Settings(BaseSettings):
     default_target_language: str = "ru"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    @field_validator("default_ai_provider")
+    @classmethod
+    def validate_default_provider(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        allowed = {"openai", "anthropic", "deepl"}
+        if normalized not in allowed:
+            raise ValueError("default_ai_provider must be one of: openai, anthropic, deepl")
+        return normalized
+
+    @field_validator("translation_timeout")
+    @classmethod
+    def validate_timeout(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("translation_timeout must be greater than 0")
+        return value
+
+    @field_validator("max_retries")
+    @classmethod
+    def validate_max_retries(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("max_retries must be >= 0")
+        return value
 
     @property
     def upload_dir_path(self) -> Path:

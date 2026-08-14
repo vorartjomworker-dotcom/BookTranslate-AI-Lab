@@ -13,6 +13,23 @@ This project is designed to support a complete workflow:
 - manage translation jobs in Redis/async workers
 - persist all metadata in PostgreSQL
 
+## AI Translation Layer
+
+PR #4 introduces a provider abstraction for translation work without connecting it to the Redis queue or automatic bulk translation flow.
+
+### Supported providers
+- OpenAI via async client with optional `OPENAI_BASE_URL` override for OpenAI-compatible APIs
+- Anthropic via async Messages API
+- DeepL via HTTPX with free/pro endpoint selection
+
+### Core rules
+- One common `TranslationRequest` and `TranslationResult` contract
+- Shared prompt builder with injection-safe instructions
+- Provider selection is explicit and lazy
+- No automatic fallback across paid providers
+- Timeout and retry are handled centrally in `TranslationService`
+- API keys remain environment-only values and are never logged or exposed in errors
+
 ## Architecture
 
 ### Backend
@@ -117,6 +134,24 @@ npm run dev
 ## Environment variables
 
 See [.env.example](.env.example) for the supported settings.
+
+Key AI settings:
+
+```env
+OPENAI_API_KEY=
+OPENAI_MODEL=gpt-4o
+OPENAI_BASE_URL=
+ANTHROPIC_API_KEY=
+ANTHROPIC_MODEL=claude-3-5-sonnet-20240620
+DEEPL_API_KEY=
+DEEPL_USE_PRO=false
+DEFAULT_AI_PROVIDER=openai
+DEFAULT_AI_MODEL=gpt-4o
+TRANSLATION_TIMEOUT=30
+MAX_RETRIES=3
+```
+
+PR #4 implements the provider abstraction and translation service. PR #5 will connect this engine to the Redis worker and orchestration layer.
 
 ## Implementation Status
 
