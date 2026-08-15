@@ -103,16 +103,22 @@ it('preserves newer local edits when an earlier save response returns and preven
 });
 
 it('aborts an obsolete save and clears the discarded draft when navigating away', async () => {
-  let patchSignal: AbortSignal | null = null;
+  let patchStarted = false;
+  let patchAborted = false;
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method || 'GET';
     const base = baseFetchRoutes(url, method);
     if (base) return base;
     if (url.endsWith('/api/v1/segments/21/translation') && method === 'PATCH') {
-      patchSignal = init?.signal || null;
+      const signal = init?.signal;
+      if (!signal) throw new Error('PATCH must receive an AbortSignal');
+      patchStarted = true;
       return await new Promise<Response>((_resolve, reject) => {
-        patchSignal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+        signal.addEventListener('abort', () => {
+          patchAborted = true;
+          reject(new DOMException('Aborted', 'AbortError'));
+        }, { once: true });
       });
     }
     throw new Error(`Unexpected request: ${method} ${url}`);
@@ -125,12 +131,12 @@ it('aborts an obsolete save and clears the discarded draft when navigating away'
 
   fireEvent.change(screen.getByLabelText('Translation'), { target: { value: 'Draft to discard' } });
   fireEvent.click(screen.getByRole('button', { name: /save translation/i }));
-  await waitFor(() => expect(patchSignal).not.toBeNull());
+  await waitFor(() => expect(patchStarted).toBe(true));
 
   fireEvent.click(screen.getByRole('button', { name: /^quality$/i }));
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Quality', level: 1 })).toBeTruthy());
   expect(confirmSpy).toHaveBeenCalledTimes(1);
-  expect(patchSignal?.aborted).toBe(true);
+  expect(patchAborted).toBe(true);
 
   confirmSpy.mockClear();
   fireEvent.click(screen.getByRole('button', { name: /^books$/i }));

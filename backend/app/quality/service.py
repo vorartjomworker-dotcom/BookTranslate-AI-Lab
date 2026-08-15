@@ -325,19 +325,24 @@ class QualityAssuranceService:
             or report.source_checksum != segment_freshness[segment_id][0]
             or report.translated_checksum != segment_freshness[segment_id][1]
         }
-        current_reports = {
+        explicitly_stale_segment_ids = {
+            segment_id
+            for segment_id in latest_reports
+            if segment_id in segment_freshness and segment_freshness[segment_id][2] == "stale"
+        }
+        checked_reports = {
             segment_id: report
             for segment_id, report in latest_reports.items()
-            if segment_id not in stale_segment_ids
+            if segment_id not in explicitly_stale_segment_ids
         }
 
-        checked_segments = len(current_reports)
-        passed = sum(1 for report in current_reports.values() if report.status == "passed")
-        needs_review = sum(1 for report in current_reports.values() if report.status == "needs_review")
-        failed = sum(1 for report in current_reports.values() if report.status == "failed")
+        checked_segments = len(checked_reports)
+        passed = sum(1 for report in checked_reports.values() if report.status == "passed")
+        needs_review = sum(1 for report in checked_reports.values() if report.status == "needs_review")
+        failed = sum(1 for report in checked_reports.values() if report.status == "failed")
         stale_reports = len(stale_segment_ids)
         average_score = (
-            sum(report.overall_score for report in current_reports.values()) / checked_segments if checked_segments else None
+            sum(report.overall_score for report in checked_reports.values()) / checked_segments if checked_segments else None
         )
 
         return BookQualitySummary(
