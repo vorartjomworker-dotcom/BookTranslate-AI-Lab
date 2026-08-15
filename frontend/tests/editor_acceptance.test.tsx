@@ -133,13 +133,13 @@ it('aborts an obsolete save and clears the discarded draft when navigating away'
   fireEvent.click(screen.getByRole('button', { name: /save translation/i }));
   await waitFor(() => expect(patchStarted).toBe(true));
 
-  fireEvent.click(screen.getByRole('button', { name: /^quality$/i }));
+  fireEvent.click(screen.getByRole('button', { name: /quality$/i }));
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Quality', level: 1 })).toBeTruthy());
   expect(confirmSpy).toHaveBeenCalledTimes(1);
   expect(patchAborted).toBe(true);
 
   confirmSpy.mockClear();
-  fireEvent.click(screen.getByRole('button', { name: /^books$/i }));
+  fireEvent.click(screen.getByRole('button', { name: /books$/i }));
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Books', level: 1 })).toBeTruthy());
   expect(confirmSpy).not.toHaveBeenCalled();
   expect(screen.getByDisplayValue('Old translation')).toBeTruthy();
@@ -182,12 +182,12 @@ it('refreshes selected segment and list QA state after rerunning quality without
 
   render(<HomePage />);
   await openEditor();
-  fireEvent.click(screen.getByRole('button', { name: /^quality$/i }));
+  fireEvent.click(screen.getByRole('button', { name: /quality$/i }));
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Quality', level: 1 })).toBeTruthy());
   fireEvent.click(screen.getByRole('button', { name: /run quality check/i }));
 
   await waitFor(() => expect(screen.getByText('No quality issues detected.')).toBeTruthy());
-  fireEvent.click(screen.getByRole('button', { name: /^books$/i }));
+  fireEvent.click(screen.getByRole('button', { name: /books$/i }));
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Books', level: 1 })).toBeTruthy());
   expect(screen.getByText('passed')).toBeTruthy();
   expect(screen.queryByText('stale')).toBeNull();
