@@ -53,11 +53,16 @@ class SegmentService:
                 segment.qa_score = 0
                 segment.qa_status = "stale"
                 segment.qa_comment = "Manual translation edit invalidated the previous QA result."
-                updated = segment
-            else:
-                updated = await self.repository.update(segment, payload)
+
+            for field, value in payload.items():
+                if field == "translated_text":
+                    continue
+                if value is None:
+                    continue
+                setattr(segment, field, value)
+
             await self.session.commit()
-            return updated
+            return segment
         except IntegrityError as exc:
             await self.session.rollback()
             raise ConflictError("Segment update violates a database constraint.") from exc

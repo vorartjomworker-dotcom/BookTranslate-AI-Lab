@@ -266,6 +266,22 @@ class QualityAssuranceService:
             force=force,
         )
 
+    async def get_latest_report_for_segment(self, segment_id: int) -> TranslationQualityReport | None:
+        segment = await self.session.get(Segment, segment_id)
+        if segment is None:
+            return None
+        if segment.qa_status == "stale":
+            return None
+
+        report = await self.repository.get_latest_by_segment(segment_id)
+        if report is None:
+            return None
+
+        current_checksum = sha256_text(segment.translated_text or "")
+        if report.translated_checksum != current_checksum:
+            return None
+        return report
+
     async def get_book_summary(self, book_id: int) -> BookQualitySummary:
         book = await self.session.get(Book, book_id)
         if book is None:

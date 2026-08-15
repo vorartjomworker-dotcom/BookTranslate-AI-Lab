@@ -151,3 +151,13 @@ def test_manual_translation_patch_rejects_unsafe_fields(client: TestClient, fake
     assert response.status_code == 422
     body = response.json()
     assert body["code"] == "validation_error"
+
+
+def test_manual_translation_patch_preserves_legacy_status_fields(client: TestClient, fake_db_override):
+    response = client.patch("/api/v1/segments/1", json={"status": "translated", "qa_status": "stale", "qa_score": 0})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "translated"
+    assert payload["qa_status"] == "stale"
+    assert payload["qa_score"] == 0

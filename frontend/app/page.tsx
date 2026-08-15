@@ -45,6 +45,11 @@ export default function HomePage() {
   const [draftDirty, setDraftDirty] = useState(false);
   const detailRequestController = useRef<AbortController | null>(null);
   const saveRequestToken = useRef(0);
+  const activeSegmentIdRef = useRef<number | null>(null);
+
+  function invalidateSaveRequest() {
+    saveRequestToken.current += 1;
+  }
 
   async function loadBooks() { setLoading(true); setError(''); try { const response = await api.get<Paginated<Book>>('/api/v1/books?page=1&page_size=50'); setBooks(response.items || []); } catch (requestError) { setError(errorMessage(requestError)); } finally { setLoading(false); } }
   async function loadRuns() { try { const response = await api.get<Paginated<BenchmarkRun>>('/api/v1/benchmark-runs?page=1&page_size=50'); setRuns(response.items || []); } catch (requestError) { setError(errorMessage(requestError)); } }
@@ -52,12 +57,12 @@ export default function HomePage() {
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { void loadBooks(); void loadRuns(); }, []);
 
-  function clearSegmentState() { setSelectedJob(null); setJobs([]); setQualityReport(null); setDraftTranslation(''); setDraftDirty(false); }
+  function clearSegmentState() { setSelectedJob(null); setJobs([]); setQualityReport(null); setDraftTranslation(''); setDraftDirty(false); activeSegmentIdRef.current = null; }
   function startDetailRequest() { detailRequestController.current?.abort(); const controller = new AbortController(); detailRequestController.current = controller; return controller; }
   function isAbortError(error: unknown) { return error instanceof DOMException && error.name === 'AbortError'; }
-  async function openBook(book: Book) { const controller = startDetailRequest(); clearSegmentState(); setSelectedBook(book); setSelectedChapter(null); setSelectedSegment(null); setChapters([]); setSegments([]); setQualitySummary(null); setDetailLoading(true); setError(''); try { const [bookResponse, chapterResponse, summaryResponse] = await Promise.all([api.get<Book>(`/api/v1/books/${book.id}`, { signal: controller.signal }), api.get<Paginated<Chapter>>(`/api/v1/books/${book.id}/chapters?page=1&page_size=50`, { signal: controller.signal }), api.get<QualitySummary>(`/api/v1/books/${book.id}/quality-summary`, { signal: controller.signal })]); if (controller.signal.aborted) return; setSelectedBook(bookResponse); setChapters(chapterResponse.items || []); setQualitySummary(summaryResponse); } catch (requestError) { if (!isAbortError(requestError)) setError(errorMessage(requestError)); } finally { if (!controller.signal.aborted) setDetailLoading(false); } }
-  async function openChapter(chapter: Chapter) { const controller = startDetailRequest(); clearSegmentState(); setSelectedChapter(chapter); setSelectedSegment(null); setSegments([]); setDetailLoading(true); setError(''); try { const response = await api.get<Paginated<Segment>>(`/api/v1/chapters/${chapter.id}/segments?page=1&page_size=100`, { signal: controller.signal }); if (!controller.signal.aborted) setSegments(response.items || []); } catch (requestError) { if (!isAbortError(requestError)) setError(errorMessage(requestError)); } finally { if (!controller.signal.aborted) setDetailLoading(false); } }
-  async function openSegment(segment: Segment) { const controller = startDetailRequest(); clearSegmentState(); setSelectedSegment(segment); setDraftTranslation(segment.translated_text ?? ''); setDraftDirty(false); setError(''); const [jobResponse, reportResponse] = await Promise.allSettled([api.get<TranslationJob[]>(`/api/v1/segments/${segment.id}/translation-jobs?page=1&page_size=20`, { signal: controller.signal }), api.get<QualityReport>(`/api/v1/segments/${segment.id}/quality-report`, { signal: controller.signal })]); if (controller.signal.aborted) return; if (jobResponse.status === 'fulfilled') setJobs(jobResponse.value); if (reportResponse.status === 'fulfilled') setQualityReport(reportResponse.value); else if (reportResponse.reason instanceof ApiError && reportResponse.reason.status !== 404) setError(errorMessage(reportResponse.reason)); if (jobResponse.status === 'rejected' && !isAbortError(jobResponse.reason)) setJobs([]); }
+  async function openBook(book: Book) { const controller = startDetailRequest(); invalidateSaveRequest(); clearSegmentState(); setSelectedBook(book); setSelectedChapter(null); setSelectedSegment(null); setChapters([]); setSegments([]); setQualitySummary(null); setDetailLoading(true); setError(''); try { const [bookResponse, chapterResponse, summaryResponse] = await Promise.all([api.get<Book>(`/api/v1/books/${book.id}`, { signal: controller.signal }), api.get<Paginated<Chapter>>(`/api/v1/books/${book.id}/chapters?page=1&page_size=50`, { signal: controller.signal }), api.get<QualitySummary>(`/api/v1/books/${book.id}/quality-summary`, { signal: controller.signal })]); if (controller.signal.aborted) return; setSelectedBook(bookResponse); setChapters(chapterResponse.items || []); setQualitySummary(summaryResponse); } catch (requestError) { if (!isAbortError(requestError)) setError(errorMessage(requestError)); } finally { if (!controller.signal.aborted) setDetailLoading(false); } }
+  async function openChapter(chapter: Chapter) { const controller = startDetailRequest(); invalidateSaveRequest(); clearSegmentState(); setSelectedChapter(chapter); setSelectedSegment(null); setSegments([]); setDetailLoading(true); setError(''); try { const response = await api.get<Paginated<Segment>>(`/api/v1/chapters/${chapter.id}/segments?page=1&page_size=100`, { signal: controller.signal }); if (!controller.signal.aborted) setSegments(response.items || []); } catch (requestError) { if (!isAbortError(requestError)) setError(errorMessage(requestError)); } finally { if (!controller.signal.aborted) setDetailLoading(false); } }
+  async function openSegment(segment: Segment) { const controller = startDetailRequest(); invalidateSaveRequest(); clearSegmentState(); activeSegmentIdRef.current = segment.id; setSelectedSegment(segment); setDraftTranslation(segment.translated_text ?? ''); setDraftDirty(false); setError(''); const [jobResponse, reportResponse] = await Promise.allSettled([api.get<TranslationJob[]>(`/api/v1/segments/${segment.id}/translation-jobs?page=1&page_size=20`, { signal: controller.signal }), api.get<QualityReport>(`/api/v1/segments/${segment.id}/quality-report`, { signal: controller.signal })]); if (controller.signal.aborted) return; if (jobResponse.status === 'fulfilled') setJobs(jobResponse.value); if (reportResponse.status === 'fulfilled') setQualityReport(reportResponse.value); else if (reportResponse.reason instanceof ApiError && reportResponse.reason.status !== 404) setError(errorMessage(reportResponse.reason)); if (jobResponse.status === 'rejected' && !isAbortError(jobResponse.reason)) setJobs([]); }
 
   useEffect(() => {
     if (!draftDirty) return;
@@ -129,12 +134,13 @@ export default function HomePage() {
       setDraftDirty(false);
       return;
     }
+    const segmentId = selectedSegment.id;
     const token = ++saveRequestToken.current;
     setBusy(true);
     setError('');
     try {
-      const updated = await api.patch<Segment>(`/api/v1/segments/${selectedSegment.id}/translation`, { translated_text: draftTranslation });
-      if (saveRequestToken.current !== token) return;
+      const updated = await api.patch<Segment>(`/api/v1/segments/${segmentId}/translation`, { translated_text: draftTranslation });
+      if (saveRequestToken.current !== token || activeSegmentIdRef.current !== segmentId) return;
       const nextSegment = { ...updated, qa_status: 'stale', qa_score: 0, qa_comment: 'Manual translation edit invalidated the previous QA result.' };
       setSelectedSegment(nextSegment);
       setSegments((current) => current.map((item) => item.id === nextSegment.id ? nextSegment : item));
@@ -143,10 +149,10 @@ export default function HomePage() {
       setQualityReport(null);
       setNotice('Translation saved. Prior QA was marked stale.');
     } catch (requestError) {
-      if (saveRequestToken.current !== token) return;
+      if (saveRequestToken.current !== token || activeSegmentIdRef.current !== segmentId) return;
       setError(errorMessage(requestError));
     } finally {
-      if (saveRequestToken.current === token) setBusy(false);
+      if (saveRequestToken.current === token && activeSegmentIdRef.current === segmentId) setBusy(false);
     }
   }
 

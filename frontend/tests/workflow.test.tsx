@@ -120,6 +120,60 @@ it('uses the safe translation endpoint for manual  edits and keeps a draft on sa
   expect(screen.getByText('The action could not be completed.')).toBeTruthy();
 });
 
+it('ignores a stale save response after the active segment changes', async () => {
+  const chapter = { id: 11, book_id: 1, chapter_number: 1, title: 'Intro', content: null, status: 'segmented' };
+  const firstSegment = { id: 21, chapter_id: 11, segment_number: 1, original_text: 'Source text', translated_text: 'Old translation', confidence: 0.7, model_used: 'gpt-4o', status: 'translated', qa_score: 86, qa_status: 'passed', qa_comment: null, translation_profile: 'general', tokens_used: 14, latency_ms: 30 };
+  const secondSegment = { ...firstSegment, id: 22, segment_number: 2, original_text: 'Source text two', translated_text: 'Other translation' };
+  let resolvePatch: ((value: Response) => void) | null = null;
+  const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method || 'GET';
+    if (url.endsWith('/api/v1/books?page=1&page_size=50')) return json({ items: [book] });
+    if (url.endsWith('/api/v1/benchmark-runs?page=1&page_size=50')) return json({ items: [] });
+    if (url.endsWith('/api/v1/books/1')) return json(book);
+    if (url.endsWith('/api/v1/books/1/chapters?page=1&page_size=50')) return json({ items: [chapter] });
+    if (url.endsWith('/api/v1/books/1/quality-summary')) return json({ book_id: 1, total_segments: 2, translated_segments: 2, checked_segments: 2, passed: 2, needs_review: 0, failed: 0, stale_reports: 0, average_score: 86 });
+    if (url.endsWith('/api/v1/chapters/11/segments?page=1&page_size=100')) return json({ items: [firstSegment, secondSegment] });
+    if (url.endsWith('/api/v1/segments/21/translation-jobs?page=1&page_size=20')) return json([]);
+    if (url.endsWith('/api/v1/segments/22/translation-jobs?page=1&page_size=20')) return json([]);
+    if (url.endsWith('/api/v1/segments/21/quality-report')) return json({ code: 'not_found', message: 'Quality report not found.', details: {}, request_id: 'req-missing' }, 404);
+    if (url.endsWith('/api/v1/segments/22/quality-report')) return json({ code: 'not_found', message: 'Quality report not found.', details: {}, request_id: 'req-missing' }, 404);
+    if (url.endsWith('/api/v1/segments/21/translation') && method === 'PATCH') {
+      return await new Promise<Response>((resolve) => {
+        resolvePatch = resolve;
+      });
+    }
+    if (url.endsWith('/api/v1/segments/22/translation') && method === 'PATCH') return json({ ...secondSegment, translated_text: 'Newer translation', qa_status: 'stale', qa_score: 0, qa_comment: 'Manual translation edit invalidated the previous QA result.' });
+    throw new Error(`Unexpected request: ${method} ${url}`);
+  });
+  vi.stubGlobal('fetch', fetchMock);
+
+  render(<HomePage />);
+  await screen.findByText('Distributed Systems');
+  fireEvent.click(screen.getByText('Distributed Systems'));
+  await screen.findByText('Intro');
+  fireEvent.click(screen.getByText('Intro'));
+  await screen.findByText('Source text');
+  fireEvent.click(screen.getByText('Source text'));
+
+  fireEvent.change(screen.getByLabelText('Translation'), { target: { value: 'Updated translation' } });
+  fireEvent.click(screen.getByRole('button', { name: /save translation/i }));
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/v1/segments/21/translation'), expect.objectContaining({ method: 'PATCH' })));
+
+  fireEvent.click(screen.getByText('Source text two'));
+  await waitFor(() => expect(screen.getByText('Source text two')).toBeTruthy());
+
+  const staleSaveResolver = resolvePatch;
+  if (staleSaveResolver) {
+    staleSaveResolver(json({ ...firstSegment, translated_text: 'Updated translation', qa_status: 'stale', qa_score: 0, qa_comment: 'Manual translation edit invalidated the previous QA result.' }));
+    resolvePatch = null;
+  }
+
+  await waitFor(() => expect(screen.getByDisplayValue('Other translation')).toBeTruthy());
+  expect(screen.getByText('Source text two')).toBeTruthy();
+});
+
 it('refreshes the translated segment and QA report after a job completes', async () => {
   const chapter = { id: 11, book_id: 1, chapter_number: 1, title: 'Intro', content: null, status: 'segmented' };
   const sourceSegment = { id: 21, chapter_id: 11, segment_number: 1, original_text: 'Source text', translated_text: null, confidence: 0, model_used: null, status: 'pending', qa_score: 0, qa_status: null, qa_comment: null, translation_profile: 'general', tokens_used: 0, latency_ms: 0 };

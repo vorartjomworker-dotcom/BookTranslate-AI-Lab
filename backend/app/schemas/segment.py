@@ -28,6 +28,10 @@ class SegmentCreate(SegmentBase):
 
 class SegmentUpdate(BaseModel):
     translated_text: Optional[str] = Field(default=None)
+    status: Optional[str] = Field(default=None, min_length=1, max_length=50)
+    qa_score: Optional[int] = Field(default=None, ge=0)
+    qa_status: Optional[str] = Field(default=None, max_length=50)
+    qa_comment: Optional[str] = Field(default=None)
 
     model_config = ConfigDict(from_attributes=True, extra="forbid")
 

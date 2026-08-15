@@ -112,6 +112,35 @@ def test_quality_api_missing_report_for_existing_segment_returns_404(quality_cli
     assert response.json()["code"] == "not_found"
 
 
+def test_quality_api_stale_report_is_hidden_after_manual_edit(quality_client, async_session_factory):
+    _, _, segment = _seed_book(async_session_factory)
+    report = asyncio.run(
+        _write_segment_report(
+            async_session_factory,
+            segment_id=segment.id,
+            source_text="Hello world.",
+            translated_text="Hola mundo.",
+        )
+    )
+
+    async def _mark_stale():
+        async with async_session_factory() as session:
+            stored = await session.get(Segment, segment.id)
+            assert stored is not None
+            stored.translated_text = "Hola mundo actualizado."
+            stored.qa_status = "stale"
+            stored.qa_score = 0
+            stored.qa_comment = "Manual translation edit invalidated the previous QA result."
+            await session.commit()
+
+    asyncio.run(_mark_stale())
+
+    response = quality_client.get(f"/api/v1/segments/{segment.id}/quality-report")
+    assert response.status_code == 404, response.text
+    assert response.json()["code"] == "not_found"
+    assert report.segment_id == segment.id
+
+
 def test_quality_api_book_summary_for_empty_book(quality_client, async_session_factory):
     async def _make_book():
         async with async_session_factory() as session:
