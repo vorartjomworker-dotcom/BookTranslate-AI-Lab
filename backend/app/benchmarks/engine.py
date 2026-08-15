@@ -15,7 +15,7 @@ from app.ai.exceptions import TranslationError
 from app.ai.translation_service import TranslationService
 from app.ai.types import TranslationRequest
 from app.benchmarks.dataset import load_dataset
-from app.benchmarks.metrics import summarize_case_metrics
+from app.benchmarks.metrics import summarize_case_metrics, summarize_category_metrics
 from app.benchmarks.pricing import estimate_cost_usd, get_pricing_snapshot
 from app.benchmarks.types import BenchmarkExecutionContract, BenchmarkCase, BenchmarkCaseResultModel
 from app.core.config import settings
@@ -24,6 +24,14 @@ from app.models import BenchmarkCaseResult, BenchmarkRun
 from app.quality.deterministic import DeterministicQualityEvaluator
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_benchmark_error_message(exc: Exception) -> str:
+    if isinstance(exc, ValidationError):
+        return exc.message
+    if isinstance(exc, TranslationError):
+        return \"Benchmark provider request failed.\"
+    return \"Benchmark case execution failed.\"
 
 
 class FakeBenchmarkProvider:
@@ -241,7 +249,9 @@ class BenchmarkExecutionEngine:
         except Exception as exc:
             error_code = getattr(exc, "code", exc.__class__.__name__)
             record.error_code = error_code
-            record.error_message = str(exc)
+            safe_message = _safe_benchmark_error_message(exc)
+
+            record.error_message = safe_message
             record.status = "failed"
             record.completed_at = datetime.now(timezone.utc)
             await self.session.flush()
@@ -258,7 +268,7 @@ class BenchmarkExecutionEngine:
                 qa_score=record.qa_score,
                 qa_passed=False,
                 error_code=error_code,
-                error_message=str(exc),
+                error_message=safe_message,
                 started_at=record.started_at.isoformat() if record.started_at else None,
                 completed_at=record.completed_at.isoformat() if record.completed_at else None,
             )
@@ -311,7 +321,7 @@ class BenchmarkExecutionEngine:
 
         aggregate = summarize_case_metrics(case_results)
         db_run.metrics = aggregate
-        db_run.category_metrics = {"total": aggregate}
+        db_run.category_metrics = summarize_category_metrics(case_results)
         db_run.completed_at = datetime.now(timezone.utc)
         db_run.status = "completed" if all(item["status"] == "completed" for item in case_results) else "partially_failed" if case_results else "failed"
         if not case_results:
