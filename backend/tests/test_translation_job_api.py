@@ -153,6 +153,25 @@ def test_manual_translation_endpoint_rejects_unsafe_fields(client: TestClient, f
     assert body["code"] == "validation_error"
 
 
+def test_manual_translation_endpoint_allows_clearing_translation(client: TestClient, fake_db_override):
+    # translated_text is nullable on the base Segment model and on generic SegmentUpdate,
+    # so the manual endpoint intentionally preserves the same clear-via-null semantics.
+    response = client.patch("/api/v1/segments/1/translation", json={"translated_text": None})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["translated_text"] is None
+    assert payload["status"] == "pending"
+    assert payload["qa_status"] == "stale"
+    assert payload["qa_score"] == 0
+
+    unsafe_response = client.patch(
+        "/api/v1/segments/1/translation",
+        json={"translated_text": None, "original_text": "Hacked"},
+    )
+    assert unsafe_response.status_code == 422
+
+
 def test_manual_translation_patch_accepts_legacy_compatibility_fields(client: TestClient, fake_db_override):
     response = client.patch(
         "/api/v1/segments/1",
