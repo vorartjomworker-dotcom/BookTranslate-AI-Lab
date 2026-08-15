@@ -1,6 +1,6 @@
 'use client';
 
-import { ChangeEvent, FormEvent, useEffect, useRef, useState } from 'react';
+import { FormEvent, useEffect, useRef, useState } from 'react';
 import { api, ApiError, ApiTimeoutError } from './lib/api';
 import type { BenchmarkCase, BenchmarkRun, Book, Chapter, Paginated, QualityReport, QualitySummary, Segment, TranslationJob } from './lib/types';
 import { benchmarkPayload, canRetryJob, pollUntilTerminal, validateUpload } from './lib/workflow';
@@ -38,6 +38,8 @@ export default function HomePage() {
 
   async function loadBooks() { setLoading(true); setError(''); try { const response = await api.get<Paginated<Book>>('/api/v1/books?page=1&page_size=50'); setBooks(response.items || []); } catch (requestError) { setError(errorMessage(requestError)); } finally { setLoading(false); } }
   async function loadRuns() { try { const response = await api.get<Paginated<BenchmarkRun>>('/api/v1/benchmark-runs?page=1&page_size=50'); setRuns(response.items || []); } catch (requestError) { setError(errorMessage(requestError)); } }
+  // These calls synchronize the initial view with the external API.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { void loadBooks(); void loadRuns(); }, []);
 
   function clearSegmentState() { setSelectedJob(null); setJobs([]); setQualityReport(null); }
