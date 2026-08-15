@@ -2,7 +2,7 @@ name: Backend Tests
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main, develop, 'feature/**' ]
     paths:
       - 'backend/**'
       - '.github/workflows/backend-tests.yml'
