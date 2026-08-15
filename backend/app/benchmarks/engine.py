@@ -30,8 +30,8 @@ def _safe_benchmark_error_message(exc: Exception) -> str:
     if isinstance(exc, ValidationError):
         return exc.message
     if isinstance(exc, TranslationError):
-        return \"Benchmark provider request failed.\"
-    return \"Benchmark case execution failed.\"
+        return "Benchmark provider request failed."
+    return "Benchmark case execution failed."
 
 
 class FakeBenchmarkProvider:
