@@ -3,7 +3,7 @@ import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
   title: 'BookTranslate AI Lab',
-  description: 'AI-powered technical book translation workspace',
+  description: 'Technical translation operations workspace',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
