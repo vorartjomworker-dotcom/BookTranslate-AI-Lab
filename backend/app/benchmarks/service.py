@@ -20,6 +20,10 @@ from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.models import BenchmarkCaseResult, BenchmarkRun
 
 
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
 class BenchmarkService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -166,7 +170,7 @@ class BenchmarkService:
             raise ConflictError("Benchmark run has already reached a terminal state.", details={"run_id": run.run_id, "status": run.status})
 
         run.status = "running"
-        run.started_at = datetime.now(timezone.utc)
+        run.started_at = _utcnow()
         run.execution_contract = {
             "provider": run.provider,
             "model": run.model,
@@ -224,7 +228,7 @@ class BenchmarkService:
 
         run.metrics = summarize_case_metrics(case_results)
         run.category_metrics = summarize_category_metrics(case_results)
-        run.completed_at = datetime.now(timezone.utc)
+        run.completed_at = _utcnow()
         run.status = "completed" if case_results and all(item["status"] == "completed" for item in case_results) else "partially_failed" if case_results else "failed"
         await self.session.commit()
         return run
@@ -240,7 +244,7 @@ class BenchmarkService:
         if run.status in {"completed", "failed", "cancelled"}:
             raise ConflictError("Cannot cancel a terminal benchmark run.", details={"run_id": run_id, "status": run.status})
         run.status = "cancelled"
-        run.cancelled_at = datetime.now(timezone.utc)
+        run.cancelled_at = _utcnow()
         run.error_code = "benchmark_cancelled"
         run.error_message = reason or "Benchmark run cancelled by request."
         await self.session.commit()

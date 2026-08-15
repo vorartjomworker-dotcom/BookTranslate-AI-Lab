@@ -26,6 +26,10 @@ from app.quality.deterministic import DeterministicQualityEvaluator
 logger = logging.getLogger(__name__)
 
 
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
 def _safe_benchmark_error_message(exc: Exception) -> str:
     if isinstance(exc, ValidationError):
         return exc.message
@@ -150,7 +154,7 @@ class BenchmarkExecutionEngine:
             self.session.add(record)
             await self.session.flush()
 
-        started = datetime.now(timezone.utc)
+        started = _utcnow()
         record.status = "running"
         record.started_at = started
         record.completed_at = None
@@ -181,7 +185,7 @@ class BenchmarkExecutionEngine:
                 record.qa_score = float(score)
                 record.qa_passed = score >= 80
                 record.status = "completed"
-                record.completed_at = datetime.now(timezone.utc)
+                record.completed_at = _utcnow()
                 await self.session.flush()
                 return BenchmarkCaseResultModel(
                     case_id=case.case_id,
@@ -227,7 +231,7 @@ class BenchmarkExecutionEngine:
             record.estimated_cost_usd = estimated_cost_usd
             record.qa_score = float(score)
             record.qa_passed = score >= 80
-            record.completed_at = datetime.now(timezone.utc)
+            record.completed_at = _utcnow()
             await self.session.flush()
             return BenchmarkCaseResultModel(
                 case_id=case.case_id,
@@ -253,7 +257,7 @@ class BenchmarkExecutionEngine:
 
             record.error_message = safe_message
             record.status = "failed"
-            record.completed_at = datetime.now(timezone.utc)
+            record.completed_at = _utcnow()
             await self.session.flush()
             return BenchmarkCaseResultModel(
                 case_id=case.case_id,
@@ -278,7 +282,7 @@ class BenchmarkExecutionEngine:
             raise ConflictError("This benchmark run is already terminal.", details={"run_id": db_run.run_id, "status": db_run.status})
 
         db_run.status = "running"
-        db_run.started_at = datetime.now(timezone.utc)
+        db_run.started_at = _utcnow()
         db_run.execution_contract = {
             "provider": db_run.provider,
             "model": db_run.model,
@@ -322,7 +326,7 @@ class BenchmarkExecutionEngine:
         aggregate = summarize_case_metrics(case_results)
         db_run.metrics = aggregate
         db_run.category_metrics = summarize_category_metrics(case_results)
-        db_run.completed_at = datetime.now(timezone.utc)
+        db_run.completed_at = _utcnow()
         db_run.status = "completed" if all(item["status"] == "completed" for item in case_results) else "partially_failed" if case_results else "failed"
         if not case_results:
             db_run.status = "failed"
