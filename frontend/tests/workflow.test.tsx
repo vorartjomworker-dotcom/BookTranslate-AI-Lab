@@ -64,11 +64,11 @@ it('refreshes the translated segment and QA report after a job completes', async
   await screen.findByText('Source text');
   fireEvent.click(screen.getByText('Source text'));
   await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/segments/21/translation-jobs'), expect.anything()));
-  fireEvent.click(screen.getByRole('button', { name: 'Translation Jobs' }));
+  fireEvent.click(screen.getByRole('button', { name: /Translation Jobs/ }));
   fireEvent.click(screen.getByRole('button', { name: /Queue translation/i }));
 
   await screen.findByText('Fresh translation');
-  fireEvent.click(screen.getByRole('button', { name: 'Quality' }));
+  fireEvent.click(screen.getByRole('button', { name: /Quality/ }));
   await screen.findByText('Fresh QA report');
   expect(qualityReads).toBe(2);
 });
