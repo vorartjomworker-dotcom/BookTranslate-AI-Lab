@@ -62,6 +62,26 @@ class ValidationError(APIError):
         )
 
 
+class AuthenticationError(APIError):
+    def __init__(self, message: str = "Authentication required.", *, details: Mapping[str, Any] | None = None) -> None:
+        super().__init__(
+            message,
+            code="unauthorized",
+            http_status=401,
+            details=details or {},
+        )
+
+
+class AuthorizationError(APIError):
+    def __init__(self, message: str = "You do not have permission to perform this action.", *, details: Mapping[str, Any] | None = None) -> None:
+        super().__init__(
+            message,
+            code="forbidden",
+            http_status=403,
+            details=details or {},
+        )
+
+
 class PayloadTooLargeError(APIError):
     def __init__(self, message: str, *, details: Mapping[str, Any] | None = None) -> None:
         super().__init__(

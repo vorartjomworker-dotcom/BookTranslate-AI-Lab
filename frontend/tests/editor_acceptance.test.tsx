@@ -2,6 +2,7 @@ import React from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
+import { AuthProvider } from '../app/AuthProvider';
 import HomePage from '../app/page';
 import type { Book, QualityReport, Segment } from '../app/lib/types';
 
@@ -55,6 +56,7 @@ async function openEditor() {
 }
 
 function baseFetchRoutes(url: string, method: string, segment: Segment = sourceSegment): Response | null {
+  if (url.endsWith('/api/v1/auth/refresh') && method === 'POST') return json({ access_token: 'test-access-token', token_type: 'bearer', expires_in: 900, user: { id: 1, email: 'editor@example.com', role: 'editor', is_active: true, created_at: '2026-01-01T00:00:00Z' } });
   if (url.endsWith('/api/v1/books?page=1&page_size=50')) return json({ items: [book] });
   if (url.endsWith('/api/v1/benchmark-runs?page=1&page_size=50')) return json({ items: [] });
   if (url.endsWith('/api/v1/books/1')) return json(book);
@@ -79,7 +81,7 @@ it('preserves newer local edits when an earlier save response returns and preven
   });
   vi.stubGlobal('fetch', fetchMock);
 
-  render(<HomePage />);
+  render(<AuthProvider><HomePage /></AuthProvider>);
   await openEditor();
 
   fireEvent.change(screen.getByLabelText('Translation'), { target: { value: 'Submitted translation' } });
@@ -126,7 +128,7 @@ it('aborts an obsolete save and clears the discarded draft when navigating away'
   vi.stubGlobal('fetch', fetchMock);
   const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
 
-  render(<HomePage />);
+  render(<AuthProvider><HomePage /></AuthProvider>);
   await openEditor();
 
   fireEvent.change(screen.getByLabelText('Translation'), { target: { value: 'Draft to discard' } });
@@ -180,7 +182,7 @@ it('refreshes selected segment and list QA state after rerunning quality without
   });
   vi.stubGlobal('fetch', fetchMock);
 
-  render(<HomePage />);
+  render(<AuthProvider><HomePage /></AuthProvider>);
   await openEditor();
   fireEvent.click(screen.getByRole('button', { name: /quality$/i }));
   await waitFor(() => expect(screen.getByRole('heading', { name: 'Quality', level: 1 })).toBeTruthy());

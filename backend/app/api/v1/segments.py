@@ -5,7 +5,10 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.pagination import MAX_PAGE_SIZE, build_paginated_response, normalize_pagination
+from app.core.roles import ADMIN_ROLES, EDITOR_ROLES
+from app.dependencies.auth import get_current_user, require_roles
 from app.dependencies.db import get_db
+from app.models import User
 from app.schemas.segment import SegmentCreate, SegmentRead, SegmentTranslationUpdate, SegmentUpdate
 from app.services.chapter_service import ChapterService
 from app.services.segment_service import SegmentService
@@ -18,6 +21,7 @@ async def list_segments(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=MAX_PAGE_SIZE),
     db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
 ) -> dict[str, Any]:
     service = SegmentService(db)
     page, page_size = normalize_pagination(page, page_size)
@@ -26,7 +30,7 @@ async def list_segments(
 
 
 @router.get("/segments/{segment_id}", response_model=SegmentRead)
-async def get_segment(segment_id: int, db: AsyncSession = Depends(get_db)) -> SegmentRead:
+async def get_segment(segment_id: int, db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)) -> SegmentRead:
     service = SegmentService(db)
     item = await service.get_segment(segment_id)
     return SegmentRead.model_validate(item)
@@ -37,6 +41,7 @@ async def create_chapter_segment(
     chapter_id: int,
     payload: SegmentCreate,
     db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_roles(*EDITOR_ROLES)),
 ) -> SegmentRead:
     service = SegmentService(db)
     item = await service.create_segment_for_chapter(chapter_id, payload.model_dump())
@@ -44,21 +49,21 @@ async def create_chapter_segment(
 
 
 @router.patch("/segments/{segment_id}", response_model=SegmentRead)
-async def patch_segment(segment_id: int, payload: SegmentUpdate, db: AsyncSession = Depends(get_db)) -> SegmentRead:
+async def patch_segment(segment_id: int, payload: SegmentUpdate, db: AsyncSession = Depends(get_db), _: User = Depends(require_roles(*EDITOR_ROLES))) -> SegmentRead:
     service = SegmentService(db)
     item = await service.update_segment(segment_id, payload.model_dump(exclude_unset=True))
     return SegmentRead.model_validate(item)
 
 
 @router.patch("/segments/{segment_id}/translation", response_model=SegmentRead)
-async def patch_segment_translation(segment_id: int, payload: SegmentTranslationUpdate, db: AsyncSession = Depends(get_db)) -> SegmentRead:
+async def patch_segment_translation(segment_id: int, payload: SegmentTranslationUpdate, db: AsyncSession = Depends(get_db), _: User = Depends(require_roles(*EDITOR_ROLES))) -> SegmentRead:
     service = SegmentService(db)
     item = await service.update_segment_translation(segment_id, payload.model_dump(exclude_unset=True))
     return SegmentRead.model_validate(item)
 
 
 @router.delete("/segments/{segment_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
-async def delete_segment(segment_id: int, db: AsyncSession = Depends(get_db)) -> Response:
+async def delete_segment(segment_id: int, db: AsyncSession = Depends(get_db), _: User = Depends(require_roles(*ADMIN_ROLES))) -> Response:
     service = SegmentService(db)
     await service.delete_segment(segment_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -70,6 +75,7 @@ async def list_segments_for_chapter(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=MAX_PAGE_SIZE),
     db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
 ) -> dict[str, Any]:
     service = ChapterService(db)
     page, page_size = normalize_pagination(page, page_size)

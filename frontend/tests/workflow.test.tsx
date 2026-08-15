@@ -1,6 +1,7 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { AuthProvider } from '../app/AuthProvider';
 import HomePage from '../app/page';
 import { BooksView, BenchmarksView, QualityView } from '../app/components/views';
 import { bookRowLabel, failedJobMessage, qualityIssueCount } from '../app/lib/presenters';
@@ -25,13 +26,13 @@ it('validates only EPUB/DOCX extension and size', () => { expect(validateUpload(
 it('shows retry only for failed jobs', () => { expect(canRetryJob('failed')).toBe(true); expect(canRetryJob('running')).toBe(false); expect(failedJobMessage(failedJob)).toContain('failure'); });
 it('keeps benchmark execution in dry-run mode', () => expect(benchmarkPayload('openai', 'gpt-4o', 5)).toMatchObject({ dry_run: true, confirm_live_provider: false, max_cases: 5 }));
 it('exposes QA issue count', () => { const report = { issues: [{ code: 'missing', severity: 'error', message: 'Missing', field: null, expected: null, actual: null, score_impact: 5 }] } as QualityReport; expect(qualityIssueCount(report)).toBe(1); });
-it('renders a book row in the Books workflow', () => { render(<BooksView books={[book]} selectedBook={null} chapters={[]} selectedChapter={null} segments={[]} selectedSegment={null} qualitySummary={null} detailLoading={false} uploadFile={null} busy={false} onBook={vi.fn()} onChapter={vi.fn()} onSegment={vi.fn()} onFile={vi.fn()} onUpload={vi.fn()} />); expect(screen.getByText('Distributed Systems')).toBeTruthy(); });
-it('exposes only EPUB/DOCX in the Books upload UI', () => { render(<BooksView books={[]} selectedBook={null} chapters={[]} selectedChapter={null} segments={[]} selectedSegment={null} qualitySummary={null} detailLoading={false} uploadFile={null} busy={false} onBook={vi.fn()} onChapter={vi.fn()} onSegment={vi.fn()} onFile={vi.fn()} onUpload={vi.fn()} />); expect(screen.getByLabelText('Source document').getAttribute('accept')).toBe('.docx,.epub'); });
+it('renders a book row in the Books workflow', () => { render(<BooksView books={[book]} selectedBook={null} chapters={[]} selectedChapter={null} segments={[]} selectedSegment={null} qualitySummary={null} detailLoading={false} uploadFile={null} busy={false} role="editor" onBook={vi.fn()} onChapter={vi.fn()} onSegment={vi.fn()} onFile={vi.fn()} onUpload={vi.fn()} />); expect(screen.getByText('Distributed Systems')).toBeTruthy(); });
+it('exposes only EPUB/DOCX in the Books upload UI', () => { render(<BooksView books={[]} selectedBook={null} chapters={[]} selectedChapter={null} segments={[]} selectedSegment={null} qualitySummary={null} detailLoading={false} uploadFile={null} busy={false} role="editor" onBook={vi.fn()} onChapter={vi.fn()} onSegment={vi.fn()} onFile={vi.fn()} onUpload={vi.fn()} />); expect(screen.getByLabelText('Source document').getAttribute('accept')).toBe('.docx,.epub'); });
 it('renders QA issues in the Quality workflow', () => { const report = { issues: [{ code: 'missing', severity: 'error', message: 'Wrong term', field: 'terminology', expected: 'API', actual: 'api', score_impact: 5 }], overall_score: 70, deterministic_score: 70, ai_score: null, ai_evaluated: false, status: 'needs_review', summary: 'Review needed', mode: 'deterministic' } as QualityReport; render(<QualityView segment={{ id: 1, chapter_id: 1, segment_number: 1, original_text: 'Source', translated_text: 'Translation', confidence: 1, model_used: null, status: 'translated', qa_score: 70, qa_status: 'needs_review', qa_comment: null, translation_profile: 'general', tokens_used: 3, latency_ms: 10 }} report={report} mode="deterministic" busy={false} onMode={vi.fn()} onCheck={vi.fn()} />); expect(screen.getByText('Wrong term')).toBeTruthy(); });
-it('renders the safe benchmark dry-run form', () => { render(<BenchmarksView runs={[]} selectedRun={null} cases={[]} form={{ provider: 'openai', model: 'gpt-4o', max_cases: 5 }} busy={false} detailLoading={false} onForm={vi.fn()} onCreate={vi.fn()} onRun={vi.fn()} onResume={vi.fn()} onCancel={vi.fn()} onExport={vi.fn()} />); expect(screen.getByRole('button', { name: /start dry-run/i })).toBeTruthy(); });
-it('maps every benchmark provider to its supported model', () => { const onForm = vi.fn(); render(<BenchmarksView runs={[]} selectedRun={null} cases={[]} form={{ provider: 'openai', model: 'gpt-4o', max_cases: 5 }} busy={false} detailLoading={false} onForm={onForm} onCreate={vi.fn()} onRun={vi.fn()} onResume={vi.fn()} onCancel={vi.fn()} onExport={vi.fn()} />); fireEvent.change(screen.getByLabelText('Provider'), { target: { value: 'deepl' } }); expect(onForm).toHaveBeenCalledWith(expect.objectContaining({ provider: 'deepl', model: 'free' })); });
-it('requires explicit benchmark cancellation confirmation', () => { const onCancel = vi.fn(); const run = { run_id: 'run-1', provider: 'openai', model: 'gpt-4o', status: 'running', dataset_name: 'technical_translation', dataset_version: '2026.08.15', metrics: {}, category_metrics: {}, created_at: null }; render(<BenchmarksView runs={[run]} selectedRun={run} cases={[]} form={{ provider: 'openai', model: 'gpt-4o', max_cases: 5 }} busy={false} detailLoading={false} onForm={vi.fn()} onCreate={vi.fn()} onRun={vi.fn()} onResume={vi.fn()} onCancel={onCancel} onExport={vi.fn()} />); fireEvent.click(screen.getByRole('button', { name: 'Cancel' })); expect(onCancel).not.toHaveBeenCalled(); fireEvent.click(screen.getByRole('button', { name: 'Cancel run' })); expect(onCancel).toHaveBeenCalledWith(run); });
-it('renders persisted benchmark category metrics without recalculation', () => { const run = { run_id: 'run-1', provider: 'openai', model: 'gpt-4o', status: 'completed', dataset_name: 'technical_translation', dataset_version: '2026.08.15', metrics: { case_count: 2 }, category_metrics: { terminology: { case_count: 2, success_rate: 50, average_qa_score: 72, p95_latency_ms: 140, total_estimated_cost_usd: 0.01 } }, created_at: null }; render(<BenchmarksView runs={[run]} selectedRun={run} cases={[]} form={{ provider: 'openai', model: 'gpt-4o', max_cases: 5 }} busy={false} detailLoading={false} onForm={vi.fn()} onCreate={vi.fn()} onRun={vi.fn()} onResume={vi.fn()} onCancel={vi.fn()} onExport={vi.fn()} />); expect(screen.getByText('terminology')).toBeTruthy(); expect(screen.getByText('50% success')).toBeTruthy(); expect(screen.getByText('72 QA')).toBeTruthy(); });
+it('renders the safe benchmark dry-run form', () => { render(<BenchmarksView runs={[]} selectedRun={null} cases={[]} form={{ provider: 'openai', model: 'gpt-4o', max_cases: 5 }} busy={false} role="admin" detailLoading={false} onForm={vi.fn()} onCreate={vi.fn()} onRun={vi.fn()} onResume={vi.fn()} onCancel={vi.fn()} onExport={vi.fn()} />); expect(screen.getByRole('button', { name: /start dry-run/i })).toBeTruthy(); });
+it('maps every benchmark provider to its supported model', () => { const onForm = vi.fn(); render(<BenchmarksView runs={[]} selectedRun={null} cases={[]} form={{ provider: 'openai', model: 'gpt-4o', max_cases: 5 }} busy={false} role="admin" detailLoading={false} onForm={onForm} onCreate={vi.fn()} onRun={vi.fn()} onResume={vi.fn()} onCancel={vi.fn()} onExport={vi.fn()} />); fireEvent.change(screen.getByLabelText('Provider'), { target: { value: 'deepl' } }); expect(onForm).toHaveBeenCalledWith(expect.objectContaining({ provider: 'deepl', model: 'free' })); });
+it('requires explicit benchmark cancellation confirmation', () => { const onCancel = vi.fn(); const run = { run_id: 'run-1', provider: 'openai', model: 'gpt-4o', status: 'running', dataset_name: 'technical_translation', dataset_version: '2026.08.15', metrics: {}, category_metrics: {}, created_at: null }; render(<BenchmarksView runs={[run]} selectedRun={run} cases={[]} form={{ provider: 'openai', model: 'gpt-4o', max_cases: 5 }} busy={false} role="admin" detailLoading={false} onForm={vi.fn()} onCreate={vi.fn()} onRun={vi.fn()} onResume={vi.fn()} onCancel={onCancel} onExport={vi.fn()} />); fireEvent.click(screen.getByRole('button', { name: 'Cancel' })); expect(onCancel).not.toHaveBeenCalled(); fireEvent.click(screen.getByRole('button', { name: 'Cancel run' })); expect(onCancel).toHaveBeenCalledWith(run); });
+it('renders persisted benchmark category metrics without recalculation', () => { const run = { run_id: 'run-1', provider: 'openai', model: 'gpt-4o', status: 'completed', dataset_name: 'technical_translation', dataset_version: '2026.08.15', metrics: { case_count: 2 }, category_metrics: { terminology: { case_count: 2, success_rate: 50, average_qa_score: 72, p95_latency_ms: 140, total_estimated_cost_usd: 0.01 } }, created_at: null }; render(<BenchmarksView runs={[run]} selectedRun={run} cases={[]} form={{ provider: 'openai', model: 'gpt-4o', max_cases: 5 }} busy={false} role="admin" detailLoading={false} onForm={vi.fn()} onCreate={vi.fn()} onRun={vi.fn()} onResume={vi.fn()} onCancel={vi.fn()} onExport={vi.fn()} />); expect(screen.getByText('terminology')).toBeTruthy(); expect(screen.getByText('50% success')).toBeTruthy(); expect(screen.getByText('72 QA')).toBeTruthy(); });
 
 it('renders a translation editor with read-only source and local draft tracking', () => {
   render(
@@ -46,6 +47,7 @@ it('renders a translation editor with read-only source and local draft tracking'
       detailLoading={false}
       uploadFile={null}
       busy={false}
+      role="editor"
       onBook={vi.fn()}
       onChapter={vi.fn()}
       onSegment={vi.fn()}
@@ -76,6 +78,7 @@ it('shows segment position and disables previous/next at boundaries', () => {
       detailLoading={false}
       uploadFile={null}
       busy={false}
+      role="editor"
       onPrevious={vi.fn()}
       onNext={vi.fn()}
       onBook={vi.fn()}
@@ -99,6 +102,7 @@ it('uses the safe translation endpoint for manual  edits and keeps a draft on sa
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method || 'GET';
+    if (url.endsWith('/api/v1/auth/refresh') && method === 'POST') return json({ access_token: 'test-access-token', token_type: 'bearer', expires_in: 900, user: { id: 1, email: 'editor@example.com', role: 'editor', is_active: true, created_at: '2026-01-01T00:00:00Z' } });
     if (url.endsWith('/api/v1/books?page=1&page_size=50')) return json({ items: [book] });
     if (url.endsWith('/api/v1/benchmark-runs?page=1&page_size=50')) return json({ items: [] });
     if (url.endsWith('/api/v1/books/1')) return json(book);
@@ -112,7 +116,7 @@ it('uses the safe translation endpoint for manual  edits and keeps a draft on sa
   });
   vi.stubGlobal('fetch', fetchMock);
 
-  render(<HomePage />);
+  render(<AuthProvider><HomePage /></AuthProvider>);
   await screen.findByText('Distributed Systems');
   fireEvent.click(screen.getByText('Distributed Systems'));
   await screen.findByText('Intro');
@@ -137,6 +141,7 @@ it('ignores a stale save response after the active segment changes', async () =>
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method || 'GET';
+    if (url.endsWith('/api/v1/auth/refresh') && method === 'POST') return json({ access_token: 'test-access-token', token_type: 'bearer', expires_in: 900, user: { id: 1, email: 'editor@example.com', role: 'editor', is_active: true, created_at: '2026-01-01T00:00:00Z' } });
     if (url.endsWith('/api/v1/books?page=1&page_size=50')) return json({ items: [book] });
     if (url.endsWith('/api/v1/benchmark-runs?page=1&page_size=50')) return json({ items: [] });
     if (url.endsWith('/api/v1/books/1')) return json(book);
@@ -154,7 +159,7 @@ it('ignores a stale save response after the active segment changes', async () =>
   vi.stubGlobal('fetch', fetchMock);
   vi.spyOn(window, 'confirm').mockReturnValue(true);
 
-  render(<HomePage />);
+  render(<AuthProvider><HomePage /></AuthProvider>);
   await screen.findByText('Distributed Systems');
   fireEvent.click(screen.getByText('Distributed Systems'));
   await screen.findByText('Intro');
@@ -186,6 +191,7 @@ it('does not leave the next section permanently busy after a save is invalidated
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method || 'GET';
+    if (url.endsWith('/api/v1/auth/refresh') && method === 'POST') return json({ access_token: 'test-access-token', token_type: 'bearer', expires_in: 900, user: { id: 1, email: 'editor@example.com', role: 'editor', is_active: true, created_at: '2026-01-01T00:00:00Z' } });
     if (url.endsWith('/api/v1/books?page=1&page_size=50')) return json({ items: [book] });
     if (url.endsWith('/api/v1/benchmark-runs?page=1&page_size=50')) return json({ items: [] });
     if (url.endsWith('/api/v1/books/1')) return json(book);
@@ -200,7 +206,7 @@ it('does not leave the next section permanently busy after a save is invalidated
   vi.stubGlobal('fetch', fetchMock);
   vi.spyOn(window, 'confirm').mockReturnValue(true);
 
-  render(<HomePage />);
+  render(<AuthProvider><HomePage /></AuthProvider>);
   await screen.findByText('Distributed Systems');
   fireEvent.click(screen.getByText('Distributed Systems'));
   await screen.findByText('Intro');
@@ -235,6 +241,7 @@ it('refreshes the translated segment and QA report after a job completes', async
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method || 'GET';
+    if (url.endsWith('/api/v1/auth/refresh') && method === 'POST') return json({ access_token: 'test-access-token', token_type: 'bearer', expires_in: 900, user: { id: 1, email: 'editor@example.com', role: 'editor', is_active: true, created_at: '2026-01-01T00:00:00Z' } });
     if (url.endsWith('/api/v1/books?page=1&page_size=50')) return json({ items: [book] });
     if (url.endsWith('/api/v1/benchmark-runs?page=1&page_size=50')) return json({ items: [] });
     if (url.endsWith('/api/v1/books/1/chapters?page=1&page_size=50')) return json({ items: [chapter] });
@@ -254,7 +261,7 @@ it('refreshes the translated segment and QA report after a job completes', async
   });
   vi.stubGlobal('fetch', fetchMock);
 
-  render(<HomePage />);
+  render(<AuthProvider><HomePage /></AuthProvider>);
   await screen.findByText('Distributed Systems');
   fireEvent.click(screen.getByText('Distributed Systems'));
   await screen.findByText('Intro');

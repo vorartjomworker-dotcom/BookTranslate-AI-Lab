@@ -28,7 +28,27 @@ export class ApiTimeoutError extends Error {
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/$/, '');
 const DEFAULT_TIMEOUT_MS = 15000;
 
+// In-memory only: the access token is never written to localStorage/sessionStorage so it
+// cannot be exfiltrated via XSS reading persistent storage. It is cleared on page reload
+// by design; the HttpOnly refresh cookie is used to silently re-establish a session.
+let accessToken: string | null = null;
+let unauthorizedHandler: (() => void) | null = null;
+
+export function setAccessToken(token: string | null): void {
+  accessToken = token;
+}
+
+export function getAccessToken(): string | null {
+  return accessToken;
+}
+
+export function setUnauthorizedHandler(handler: (() => void) | null): void {
+  unauthorizedHandler = handler;
+}
+
 function safeMessage(status: number, code?: string): string {
+  if (status === 401) return 'Your session has expired. Please log in again.';
+  if (status === 403) return 'You do not have permission to perform this action.';
   if (status === 404) return 'The requested resource was not found.';
   if (status === 409) return 'This action conflicts with the current resource state.';
   if (status === 413) return 'The uploaded file is too large.';
@@ -64,8 +84,13 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   try {
     const headers = new Headers(options.headers);
     if (options.body && !(options.body instanceof FormData) && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
-    const response = await fetch(`${API_URL}${path}`, { ...options, headers, signal: controller.signal });
-    if (!response.ok) throw new ApiError(response.status, await parseEnvelope(response));
+    const token = accessToken;
+    if (token && !headers.has('Authorization')) headers.set('Authorization', `Bearer ${token}`);
+    const response = await fetch(`${API_URL}${path}`, { ...options, headers, credentials: 'include', signal: controller.signal });
+    if (!response.ok) {
+      if (response.status === 401 && token && unauthorizedHandler) unauthorizedHandler();
+      throw new ApiError(response.status, await parseEnvelope(response));
+    }
     if (response.status === 204) return undefined as T;
     if (options.responseType === 'blob') return (await response.blob()) as T;
     return (await response.json()) as T;

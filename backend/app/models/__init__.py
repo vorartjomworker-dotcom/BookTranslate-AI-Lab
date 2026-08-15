@@ -5,6 +5,7 @@ from app.models.chapter import Chapter
 from app.models.segment import Segment
 from app.models.translation_job import TranslationJob
 from app.models.translation_quality_report import TranslationQualityReport
+from app.models.user import User
 
 __all__ = [
     "Base",
@@ -15,4 +16,5 @@ __all__ = [
     "TranslationQualityReport",
     "BenchmarkRun",
     "BenchmarkCaseResult",
+    "User",
 ]

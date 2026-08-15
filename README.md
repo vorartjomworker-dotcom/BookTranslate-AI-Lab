@@ -169,11 +169,40 @@ PR #5 implements the queue orchestration layer: segment translation jobs are per
 - **Benchmark execution engine** for dry-run provider comparison
 - **Frontend operational workspace** for Books, Translation Jobs, Quality, and Benchmarks
 - **Translation Editor workflow** for manual segment translation review and save
+- **Authentication & role-based access control** for the API and workspace UI (see below)
 - **Health check and deployment-safe operational endpoints** for database and Redis status
 - **Testing framework** with async and frontend coverage
 
 #### Current positioning
-This project is a production-oriented advanced MVP / pre-production platform for technical book translation. It includes the major operational and AI orchestration layers, but deployment hardening, production observability, auth, backup strategy, and full production-grade operational validation remain follow-up work outside this scope.
+This project is a production-oriented advanced MVP / pre-production platform for technical book translation. It includes the major operational and AI orchestration layers plus a first authentication/RBAC foundation, but deployment hardening, production observability, secret rotation, backup strategy, and full production-grade operational validation remain follow-up work outside this scope. **This project is not yet production-ready.**
+
+## Authentication & Roles
+
+### Overview
+The API and workspace UI require an authenticated user. Passwords are hashed with **Argon2id** (via `argon2-cffi`), a memory-hard, OWASP-recommended default that avoids bcrypt's 72-byte truncation issue. Sessions use a short-lived JSON Web Token (JWT, HS256) **access token** kept only in frontend memory (never `localStorage`), plus a longer-lived **refresh token** delivered as an `HttpOnly` cookie (`Secure`/`SameSite` configurable via settings) scoped to `/api/v1/auth`. JWTs always carry `sub`, `iat`, `exp`, and `type` (`access`/`refresh`); the decode path pins `algorithms=["HS256"]` so a forged token cannot smuggle a different or absent algorithm.
+
+### Roles
+| Role | Read (Books/Chapters/Segments/Jobs/Quality/Benchmarks) | Create/update Books/Chapters/Segments, edit translations, upload | Run translation jobs / QA checks | Delete Books/Chapters/Segments | Benchmark create/resume/cancel |
+|---|---|---|---|---|---|
+| `viewer` | ✅ | ❌ | ❌ | ❌ | ❌ |
+| `editor` | ✅ | ✅ | ✅ | ❌ | ❌ |
+| `admin` | ✅ | ✅ | ✅ | ✅ | ✅ |
+
+`/health` and `/` remain unauthenticated so container/orchestrator health checks keep working. `POST /api/v1/auth/login`, `POST /api/v1/auth/refresh`, and `POST /api/v1/auth/bootstrap-admin` are public by design (bootstrap additionally requires the `AUTH_BOOTSTRAP_TOKEN` header/setting and only works while the `users` table is empty).
+
+### Bootstrap flow
+1. Set `AUTH_BOOTSTRAP_TOKEN` to a random value in the environment.
+2. `POST /api/v1/auth/bootstrap-admin` with `{"email": "...", "password": "..."}` and header `X-Bootstrap-Token: <value>` — creates the first `admin` user. Fails with `409` once any user already exists.
+3. Log in normally afterwards via `POST /api/v1/auth/login`.
+
+### Required environment variables
+See `.env.example`: `AUTH_SECRET_KEY`, `AUTH_ACCESS_TOKEN_EXPIRES_MINUTES`, `AUTH_REFRESH_TOKEN_EXPIRES_DAYS`, `AUTH_BOOTSTRAP_TOKEN`, `AUTH_COOKIE_SECURE`, `AUTH_COOKIE_SAMESITE`.
+
+### Security assumptions & known limitations
+- Refresh tokens are stateless JWTs; there is currently **no server-side revocation list**, so a compromised refresh token remains valid until it expires. Adding a revocation store is a follow-up.
+- `AUTH_SECRET_KEY` must be set to a long random value outside local development; the shipped default is intentionally insecure and only for local use.
+- Role checks are enforced server-side on every mutating endpoint; the frontend only hides/disables controls for UX and must never be relied on as the security boundary.
+- This is an advanced MVP: rate limiting on login, account lockout, password reset flow, audit logging, and multi-tenant isolation are out of scope for this PR.
 
 ## API usage
 

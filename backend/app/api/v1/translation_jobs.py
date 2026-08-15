@@ -6,8 +6,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.exceptions import ConflictError, NotFoundError
+from app.core.roles import EDITOR_ROLES
+from app.dependencies.auth import get_current_user, require_roles
 from app.dependencies.db import get_db
-from app.models import Segment, TranslationJob
+from app.models import Segment, TranslationJob, User
 from app.schemas.translation_job import TranslationJobCreate, TranslationJobRead
 
 router = APIRouter(prefix="/api/v1", tags=["translation-jobs"])
@@ -19,6 +21,7 @@ async def list_translation_jobs_for_segment(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
 ) -> list[TranslationJobRead]:
     segment = await db.get(Segment, segment_id)
     if segment is None:
@@ -45,6 +48,7 @@ async def create_translation_job_for_segment(
     segment_id: int,
     payload: TranslationJobCreate | None = None,
     db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_roles(*EDITOR_ROLES)),
 ) -> TranslationJobRead:
     segment = await db.get(Segment, segment_id)
     if segment is None:
@@ -83,7 +87,7 @@ async def create_translation_job_for_segment(
 
 
 @router.get("/translation-jobs/{job_id}", response_model=TranslationJobRead)
-async def get_translation_job(job_id: int, db: AsyncSession = Depends(get_db)) -> TranslationJobRead:
+async def get_translation_job(job_id: int, db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)) -> TranslationJobRead:
     job = await db.get(TranslationJob, job_id)
     if job is None:
         raise NotFoundError("translation job", job_id)
@@ -95,7 +99,7 @@ async def get_translation_job(job_id: int, db: AsyncSession = Depends(get_db)) -
     response_model=TranslationJobRead,
     status_code=status.HTTP_202_ACCEPTED,
 )
-async def retry_translation_job(job_id: int, db: AsyncSession = Depends(get_db)) -> TranslationJobRead:
+async def retry_translation_job(job_id: int, db: AsyncSession = Depends(get_db), _: User = Depends(require_roles(*EDITOR_ROLES))) -> TranslationJobRead:
     job = await db.get(TranslationJob, job_id)
     if job is None:
         raise NotFoundError("translation job", job_id)

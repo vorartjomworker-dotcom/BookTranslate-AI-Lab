@@ -5,7 +5,10 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.pagination import MAX_PAGE_SIZE, build_paginated_response, normalize_pagination
+from app.core.roles import ADMIN_ROLES, EDITOR_ROLES
+from app.dependencies.auth import get_current_user, require_roles
 from app.dependencies.db import get_db
+from app.models import User
 from app.schemas.chapter import ChapterCreate, ChapterRead, ChapterUpdate
 from app.services.chapter_service import ChapterService
 
@@ -17,6 +20,7 @@ async def list_chapters(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=MAX_PAGE_SIZE),
     db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
 ) -> dict[str, Any]:
     service = ChapterService(db)
     page, page_size = normalize_pagination(page, page_size)
@@ -25,7 +29,7 @@ async def list_chapters(
 
 
 @router.get("/chapters/{chapter_id}", response_model=ChapterRead)
-async def get_chapter(chapter_id: int, db: AsyncSession = Depends(get_db)) -> ChapterRead:
+async def get_chapter(chapter_id: int, db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)) -> ChapterRead:
     service = ChapterService(db)
     item = await service.get_chapter(chapter_id)
     return ChapterRead.model_validate(item)
@@ -36,6 +40,7 @@ async def create_book_chapter(
     book_id: int,
     payload: ChapterCreate,
     db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_roles(*EDITOR_ROLES)),
 ) -> ChapterRead:
     service = ChapterService(db)
     item = await service.create_chapter_for_book(book_id, payload.model_dump())
@@ -43,14 +48,14 @@ async def create_book_chapter(
 
 
 @router.patch("/chapters/{chapter_id}", response_model=ChapterRead)
-async def patch_chapter(chapter_id: int, payload: ChapterUpdate, db: AsyncSession = Depends(get_db)) -> ChapterRead:
+async def patch_chapter(chapter_id: int, payload: ChapterUpdate, db: AsyncSession = Depends(get_db), _: User = Depends(require_roles(*EDITOR_ROLES))) -> ChapterRead:
     service = ChapterService(db)
     item = await service.update_chapter(chapter_id, payload.model_dump(exclude_unset=True))
     return ChapterRead.model_validate(item)
 
 
 @router.delete("/chapters/{chapter_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
-async def delete_chapter(chapter_id: int, db: AsyncSession = Depends(get_db)) -> Response:
+async def delete_chapter(chapter_id: int, db: AsyncSession = Depends(get_db), _: User = Depends(require_roles(*ADMIN_ROLES))) -> Response:
     service = ChapterService(db)
     await service.delete_chapter(chapter_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -62,6 +67,7 @@ async def list_chapters_for_book(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=MAX_PAGE_SIZE),
     db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
 ) -> dict[str, Any]:
     service = BookService(db)
     page, page_size = normalize_pagination(page, page_size)

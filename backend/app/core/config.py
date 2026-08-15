@@ -71,6 +71,13 @@ class Settings(BaseSettings):
     benchmark_dataset_name: str = "technical_translation"
     benchmark_dataset_version: str = "2026.08.15"
 
+    auth_secret_key: str = "dev-only-insecure-secret-change-me"
+    auth_access_token_expires_minutes: int = 15
+    auth_refresh_token_expires_days: int = 7
+    auth_bootstrap_token: str = ""
+    auth_cookie_secure: bool = False
+    auth_cookie_samesite: str = "lax"
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @field_validator("default_ai_provider")
@@ -145,6 +152,21 @@ class Settings(BaseSettings):
         if abs(total - 1.0) > 1e-9:
             raise ValueError("quality deterministic and AI weights must sum to 1")
         return self
+
+    @field_validator("auth_access_token_expires_minutes", "auth_refresh_token_expires_days")
+    @classmethod
+    def validate_auth_durations(cls, value: int, info: ValidationInfo) -> int:
+        if value <= 0:
+            raise ValueError(f"{info.field_name} must be greater than 0")
+        return value
+
+    @field_validator("auth_cookie_samesite")
+    @classmethod
+    def validate_cookie_samesite(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"lax", "strict", "none"}:
+            raise ValueError("auth_cookie_samesite must be one of: lax, strict, none")
+        return normalized
 
     @property
     def upload_dir_path(self) -> Path:
