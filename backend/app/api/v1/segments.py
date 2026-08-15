@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.pagination import MAX_PAGE_SIZE, build_paginated_response, normalize_pagination
 from app.dependencies.db import get_db
 from app.schemas.segment import SegmentCreate, SegmentRead, SegmentUpdate
+from app.services.chapter_service import ChapterService
 from app.services.segment_service import SegmentService
 
 router = APIRouter(prefix="/api/v1", tags=["segments"])
@@ -63,7 +64,7 @@ async def list_segments_for_chapter(
     page_size: int = Query(20, ge=1, le=MAX_PAGE_SIZE),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    service = SegmentService(db)
+    service = ChapterService(db)
     page, page_size = normalize_pagination(page, page_size)
-    items, total = await service.list_segments(page=page, page_size=page_size)
+    items, total = await service.list_segments(chapter_id, page=page, page_size=page_size)
     return build_paginated_response([SegmentRead.model_validate(item).model_dump() for item in items], total, page=page, page_size=page_size)

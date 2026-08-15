@@ -1,12 +1,12 @@
 import type { TranslationJobStatus } from './types';
 
-export const ACCEPTED_UPLOAD_TYPES = new Set(['epub', 'docx', 'pdf']);
+export const ACCEPTED_UPLOAD_TYPES = new Set(['epub', 'docx']);
 export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 export const TERMINAL_JOB_STATUSES = new Set<TranslationJobStatus>(['completed', 'failed']);
 
 export function validateUpload(file: { name: string; size: number }): string | null {
   const extension = file.name.split('.').pop()?.toLowerCase() || '';
-  if (!ACCEPTED_UPLOAD_TYPES.has(extension)) return 'Choose an EPUB, DOCX, or PDF file.';
+  if (!ACCEPTED_UPLOAD_TYPES.has(extension)) return 'Choose an EPUB or DOCX file.';
   if (file.size > MAX_UPLOAD_BYTES) return 'The selected file is larger than 25 MB.';
   return null;
 }
