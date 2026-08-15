@@ -6,7 +6,11 @@ from typing import AsyncGenerator
 import pytest
 from fastapi.testclient import TestClient
 
-from app.benchmarks.dataset import TECHNICAL_TRANSLATION_DATASET_VERSION
+from app.ai.exceptions import TranslationError
+from app.ai.translation_service import TranslationService
+from app.ai.types import TranslationResult
+from app.benchmarks.dataset import TECHNICAL_TRANSLATION_DATASET_VERSION, load_dataset
+from app.benchmarks.engine import BenchmarkExecutionEngine
 from app.benchmarks.metrics import summarize_category_metrics
 from app.benchmarks.pricing import get_pricing_snapshot
 from app.benchmarks.service import BenchmarkService
@@ -186,3 +190,129 @@ def test_api_error_payload_does_not_leak_secrets(benchmark_hardening_client) -> 
     assert response.status_code == 422
     rendered = response.text
     assert secret not in rendered
+
+
+@pytest.mark.asyncio
+async def test_benchmark_engine_retries_retryable_provider_error(async_session_factory, monkeypatch) -> None:
+    class FlakyProvider:
+        name = "openai"
+
+        def __init__(self) -> None:
+            self.attempts = 0
+
+        async def translate(self, request):
+            self.attempts += 1
+            if self.attempts < 3:
+                raise TranslationError(
+                    "temporary provider failure",
+                    code="provider_unavailable_error",
+                    provider="openai",
+                    retryable=True,
+                )
+            return TranslationResult(
+                translated_text="[RU] translated",
+                provider="openai",
+                model="gpt-4o",
+                source_language=request.source_language,
+                target_language=request.target_language,
+                input_tokens=10,
+                output_tokens=10,
+                total_tokens=20,
+                latency_ms=5,
+            )
+
+    async def no_sleep(_seconds: float) -> None:
+        return None
+
+    provider = FlakyProvider()
+    translation_service = TranslationService(
+        provider_factory=lambda _request: provider,
+        max_retries=2,
+        sleep_fn=no_sleep,
+    )
+
+    async with async_session_factory() as session:
+        service = BenchmarkService(session)
+        run = await service.create_run(
+            provider="openai",
+            model="gpt-4o",
+            dataset_name="technical_translation",
+            dataset_version=TECHNICAL_TRANSLATION_DATASET_VERSION,
+            max_cases=1,
+            concurrency=1,
+            seed=1,
+            timeout_seconds=30,
+            max_retries=2,
+            max_budget_usd=1.0,
+            dry_run=True,
+        )
+        engine = BenchmarkExecutionEngine(session)
+
+        async def resolve_provider(*_args, **_kwargs):
+            return translation_service
+
+        monkeypatch.setattr(engine, "_resolve_provider", resolve_provider)
+        result = await engine._run_case(
+            case=load_dataset().cases[0],
+            provider=run.provider,
+            model=run.model,
+            run=run,
+            timeout_seconds=1,
+            concurrency=1,
+            dry_run=False,
+            max_retries=2,
+            budget_remaining=1.0,
+        )
+
+    assert result.status == "completed"
+    assert provider.attempts == 3
+
+
+@pytest.mark.asyncio
+async def test_benchmark_engine_timeout_is_controlled_and_sanitized(async_session_factory, monkeypatch) -> None:
+    secret = "sk-timeout-secret"
+
+    class SlowProvider:
+        name = "openai"
+
+        async def translate(self, _request):
+            await asyncio.sleep(0.05)
+            raise RuntimeError(secret)
+
+    async with async_session_factory() as session:
+        service = BenchmarkService(session)
+        run = await service.create_run(
+            provider="openai",
+            model="gpt-4o",
+            dataset_name="technical_translation",
+            dataset_version=TECHNICAL_TRANSLATION_DATASET_VERSION,
+            max_cases=1,
+            concurrency=1,
+            seed=1,
+            timeout_seconds=30,
+            max_retries=0,
+            max_budget_usd=1.0,
+            dry_run=True,
+        )
+        engine = BenchmarkExecutionEngine(session)
+
+        async def resolve_provider(*_args, **_kwargs):
+            return SlowProvider()
+
+        monkeypatch.setattr(engine, "_resolve_provider", resolve_provider)
+        result = await engine._run_case(
+            case=load_dataset().cases[0],
+            provider=run.provider,
+            model=run.model,
+            run=run,
+            timeout_seconds=0.001,
+            concurrency=1,
+            dry_run=False,
+            max_retries=0,
+            budget_remaining=1.0,
+        )
+
+    assert result.status == "failed"
+    assert result.error_code == "TimeoutError"
+    assert result.error_message == "Benchmark case execution failed."
+    assert secret not in result.error_message
