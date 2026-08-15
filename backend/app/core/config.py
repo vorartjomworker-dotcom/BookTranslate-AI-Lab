@@ -62,6 +62,15 @@ class Settings(BaseSettings):
     default_source_language: str = "en"
     default_target_language: str = "ru"
 
+    benchmark_allow_live_provider: bool = False
+    benchmark_default_max_cases: int = 10
+    benchmark_default_timeout_seconds: int = 30
+    benchmark_default_concurrency: int = 1
+    benchmark_default_max_retries: int = 2
+    benchmark_default_max_budget_usd: float = 5.0
+    benchmark_dataset_name: str = "technical_translation"
+    benchmark_dataset_version: str = "2026.08.15"
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @field_validator("default_ai_provider")
