@@ -43,6 +43,12 @@ class SegmentUpdate(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class SegmentTranslationUpdate(BaseModel):
+    translated_text: str | None = Field(...)
+
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
+
+
 class SegmentRead(SegmentBase):
     id: int
     chapter_id: int

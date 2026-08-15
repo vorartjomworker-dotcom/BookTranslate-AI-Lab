@@ -157,21 +157,23 @@ PR #5 implements the queue orchestration layer: segment translation jobs are per
 
 ## Implementation Status
 
-### ✅ Document ingestion and API persistence
+### ✅ Translation workspace and operational platform
 
 #### Implemented
-- **FastAPI CRUD API** for books, chapters, and segments
-- **DOCX and EPUB ingestion** with validation, parsing, segmentation, and persistence
-- **Safe file storage** using UUID keys and chunked writes under the configured upload directory
-- **Archive validation** for ZIP safety, entry-count caps, uncompressed size caps, and traversal protection
-- **Transactional persistence** for Book, Chapter, and Segment rows with rollback on failures
-- **Health check endpoint** - `/health` endpoint with database and Redis status
-- **Testing framework** - pytest with async support
+- **FastAPI CRUD API** for books, chapters, segments, translation jobs, and quality reports
+- **DOCX and EPUB ingestion** with validation, parsing, deterministic segmentation, and PostgreSQL persistence
+- **Provider abstraction** for OpenAI, Anthropic, and DeepL
+- **Durable translation job orchestration** backed by PostgreSQL and Redis Streams
+- **Async worker processing** with retry, idempotency, reclaim, and stale-response protection
+- **Canonical QA evaluation** and quality reporting with deterministic/full evaluation modes
+- **Benchmark execution engine** for dry-run provider comparison
+- **Frontend operational workspace** for Books, Translation Jobs, Quality, and Benchmarks
+- **Translation Editor workflow** for manual segment translation review and save
+- **Health check and deployment-safe operational endpoints** for database and Redis status
+- **Testing framework** with async and frontend coverage
 
-#### Not implemented yet
-- **AI translation** through OpenAI/Anthropic/DeepL is not yet active
-- **Redis worker translation jobs** remain a future phase
-- **Frontend upload UI** is not part of this backend-only ingestion work
+#### Current positioning
+This project is a production-oriented advanced MVP / pre-production platform for technical book translation. It includes the major operational and AI orchestration layers, but deployment hardening, production observability, auth, backup strategy, and full production-grade operational validation remain follow-up work outside this scope.
 
 ## API usage
 

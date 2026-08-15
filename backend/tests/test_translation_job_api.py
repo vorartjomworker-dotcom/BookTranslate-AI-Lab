@@ -22,7 +22,22 @@ class _FakeSession:
 
     async def get(self, model, key):
         if model is Segment:
-            return SimpleNamespace(id=1)
+            return SimpleNamespace(
+                id=1,
+                chapter_id=1,
+                segment_number=1,
+                original_text="Original text",
+                translated_text=None,
+                confidence=0.0,
+                model_used=None,
+                status="pending",
+                qa_score=0,
+                qa_status=None,
+                qa_comment=None,
+                translation_profile="general",
+                tokens_used=0,
+                latency_ms=0,
+            )
         return None
 
     async def execute(self, stmt):
@@ -97,3 +112,113 @@ def test_create_job_succeeds_when_redis_is_unavailable(client: TestClient, fake_
 
     assert response.status_code == 202
     assert response.json()["status"] == "pending_enqueue"
+
+
+def test_manual_translation_patch_updates_only_translated_text(client: TestClient, fake_db_override):
+    response = client.patch("/api/v1/segments/1", json={"translated_text": "Manual translation"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["translated_text"] == "Manual translation"
+    assert payload["original_text"] == "Original text"
+    assert payload["status"] in {"translated", "pending"}
+
+
+def test_manual_translation_endpoint_updates_only_translated_text(client: TestClient, fake_db_override):
+    response = client.patch("/api/v1/segments/1/translation", json={"translated_text": "Manual translation"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["translated_text"] == "Manual translation"
+    assert payload["original_text"] == "Original text"
+    assert payload["status"] in {"translated", "pending"}
+
+
+def test_manual_translation_endpoint_rejects_empty_payload(client: TestClient, fake_db_override):
+    response = client.patch("/api/v1/segments/1/translation", json={})
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body["code"] == "validation_error"
+
+
+def test_manual_translation_endpoint_rejects_unsafe_fields(client: TestClient, fake_db_override):
+    response = client.patch(
+        "/api/v1/segments/1/translation",
+        json={"translated_text": "Manual translation", "original_text": "Hacked", "model_used": "ignored"},
+    )
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body["code"] == "validation_error"
+
+
+def test_manual_translation_endpoint_allows_clearing_translation(client: TestClient, fake_db_override):
+    # translated_text is nullable on the base Segment model and on generic SegmentUpdate,
+    # so the manual endpoint intentionally preserves the same clear-via-null semantics.
+    response = client.patch("/api/v1/segments/1/translation", json={"translated_text": None})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["translated_text"] is None
+    assert payload["status"] == "pending"
+    assert payload["qa_status"] == "stale"
+    assert payload["qa_score"] == 0
+
+    unsafe_response = client.patch(
+        "/api/v1/segments/1/translation",
+        json={"translated_text": None, "original_text": "Hacked"},
+    )
+    assert unsafe_response.status_code == 422
+
+
+def test_manual_translation_patch_accepts_legacy_compatibility_fields(client: TestClient, fake_db_override):
+    response = client.patch(
+        "/api/v1/segments/1",
+        json={"translated_text": "Manual translation", "original_text": "Hacked", "model_used": "ignored"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["translated_text"] == "Manual translation"
+    assert payload["original_text"] == "Hacked"
+    assert payload["model_used"] == "ignored"
+
+
+def test_manual_translation_patch_preserves_legacy_status_fields(client: TestClient, fake_db_override):
+    response = client.patch("/api/v1/segments/1", json={"status": "translated", "qa_status": "stale", "qa_score": 0})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "translated"
+    assert payload["qa_status"] == "stale"
+    assert payload["qa_score"] == 0
+
+
+def test_generic_segment_patch_accepts_legacy_compatibility_fields(client: TestClient, fake_db_override):
+    response = client.patch(
+        "/api/v1/segments/1",
+        json={
+            "segment_number": 2,
+            "original_text": "Updated original text",
+            "translated_text": "Manual translation",
+            "confidence": 0.95,
+            "model_used": "gpt-4o",
+            "status": "translated",
+            "qa_score": 0,
+            "qa_status": "stale",
+            "qa_comment": "manually updated",
+            "translation_profile": "technical",
+            "tokens_used": 42,
+            "latency_ms": 120,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["segment_number"] == 2
+    assert payload["original_text"] == "Updated original text"
+    assert payload["translated_text"] == "Manual translation"
+    assert payload["status"] == "translated"
+    assert payload["qa_status"] == "stale"
+    assert payload["qa_score"] == 0

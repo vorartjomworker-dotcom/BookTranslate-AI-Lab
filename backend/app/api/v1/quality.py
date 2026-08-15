@@ -32,7 +32,7 @@ async def get_quality_report(report_id: int, db: AsyncSession = Depends(get_db))
 @router.get("/segments/{segment_id}/quality-report", response_model=TranslationQualityReportRead)
 async def get_segment_quality_report(segment_id: int, db: AsyncSession = Depends(get_db)) -> TranslationQualityReportRead:
     service = QualityAssuranceService(db)
-    report = await service.repository.get_latest_by_segment(segment_id)
+    report = await service.get_latest_report_for_segment(segment_id)
     if report is None:
         raise NotFoundError("quality report", segment_id)
     return TranslationQualityReportRead.model_validate(report)

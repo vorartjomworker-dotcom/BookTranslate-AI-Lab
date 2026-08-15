@@ -2,7 +2,7 @@ name: Frontend Build & Lint
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main, develop, 'feature/**' ]
     paths:
       - 'frontend/**'
       - '.github/workflows/frontend-build.yml'
@@ -31,6 +31,10 @@ jobs:
     - name: Install dependencies
       working-directory: frontend
       run: npm ci
+
+    - name: Audit dependencies
+      working-directory: frontend
+      run: npm audit
 
     - name: Typecheck
       working-directory: frontend

@@ -46,12 +46,43 @@ class SegmentService:
     async def update_segment(self, segment_id: int, payload: dict[str, Any]) -> Segment:
         segment = await self.get_segment(segment_id)
         try:
-            updated = await self.repository.update(segment, payload)
+            source_changed = (
+                "original_text" in payload
+                and payload["original_text"] is not None
+                and payload["original_text"] != segment.original_text
+            )
+            translation_changed = "translated_text" in payload and payload["translated_text"] != segment.translated_text
+
+            for field, value in payload.items():
+                if value is None and field != "translated_text":
+                    continue
+                setattr(segment, field, value)
+
+            if translation_changed:
+                translated_text = segment.translated_text
+                segment.status = "translated" if translated_text is not None and translated_text.strip() else "pending"
+
+            if source_changed or translation_changed:
+                self._mark_qa_stale(segment)
+
             await self.session.commit()
-            return updated
+            return segment
         except IntegrityError as exc:
             await self.session.rollback()
             raise ConflictError("Segment update violates a database constraint.") from exc
+
+    async def update_segment_translation(self, segment_id: int, payload: dict[str, Any]) -> Segment:
+        segment = await self.get_segment(segment_id)
+        try:
+            translated_text = payload["translated_text"]
+            segment.translated_text = translated_text
+            segment.status = "translated" if translated_text is not None and translated_text.strip() else "pending"
+            self._mark_qa_stale(segment)
+            await self.session.commit()
+            return segment
+        except IntegrityError as exc:
+            await self.session.rollback()
+            raise ConflictError("Segment translation update violates a database constraint.") from exc
 
     async def delete_segment(self, segment_id: int) -> None:
         segment = await self.get_segment(segment_id)
@@ -61,6 +92,12 @@ class SegmentService:
         except IntegrityError as exc:
             await self.session.rollback()
             raise ConflictError("Segment deletion violates a database constraint.") from exc
+
+    @staticmethod
+    def _mark_qa_stale(segment: Segment) -> None:
+        segment.qa_score = 0
+        segment.qa_status = "stale"
+        segment.qa_comment = "Manual translation edit invalidated the previous QA result."
 
     @staticmethod
     def _normalize_pagination(page: int, page_size: int) -> tuple[int, int]:
