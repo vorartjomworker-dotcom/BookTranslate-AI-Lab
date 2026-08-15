@@ -25,6 +25,101 @@ it('maps every benchmark provider to its supported model', () => { const onForm 
 it('requires explicit benchmark cancellation confirmation', () => { const onCancel = vi.fn(); const run = { run_id: 'run-1', provider: 'openai', model: 'gpt-4o', status: 'running', dataset_name: 'technical_translation', dataset_version: '2026.08.15', metrics: {}, category_metrics: {}, created_at: null }; render(<BenchmarksView runs={[run]} selectedRun={run} cases={[]} form={{ provider: 'openai', model: 'gpt-4o', max_cases: 5 }} busy={false} detailLoading={false} onForm={vi.fn()} onCreate={vi.fn()} onRun={vi.fn()} onResume={vi.fn()} onCancel={onCancel} onExport={vi.fn()} />); fireEvent.click(screen.getByRole('button', { name: 'Cancel' })); expect(onCancel).not.toHaveBeenCalled(); fireEvent.click(screen.getByRole('button', { name: 'Cancel run' })); expect(onCancel).toHaveBeenCalledWith(run); });
 it('renders persisted benchmark category metrics without recalculation', () => { const run = { run_id: 'run-1', provider: 'openai', model: 'gpt-4o', status: 'completed', dataset_name: 'technical_translation', dataset_version: '2026.08.15', metrics: { case_count: 2 }, category_metrics: { terminology: { case_count: 2, success_rate: 50, average_qa_score: 72, p95_latency_ms: 140, total_estimated_cost_usd: 0.01 } }, created_at: null }; render(<BenchmarksView runs={[run]} selectedRun={run} cases={[]} form={{ provider: 'openai', model: 'gpt-4o', max_cases: 5 }} busy={false} detailLoading={false} onForm={vi.fn()} onCreate={vi.fn()} onRun={vi.fn()} onResume={vi.fn()} onCancel={vi.fn()} onExport={vi.fn()} />); expect(screen.getByText('terminology')).toBeTruthy(); expect(screen.getByText('50% success')).toBeTruthy(); expect(screen.getByText('72 QA')).toBeTruthy(); });
 
+it('renders a translation editor with read-only source and local draft tracking', () => {
+  render(
+    <BooksView
+      books={[]}
+      selectedBook={null}
+      chapters={[]}
+      selectedChapter={null}
+      segments={[]}
+      selectedSegment={{ id: 1, chapter_id: 10, segment_number: 1, original_text: 'Original text', translated_text: 'Old text', confidence: 0.9, model_used: 'gpt-4o', status: 'translated', qa_score: 88, qa_status: 'passed', qa_comment: null, translation_profile: 'general', tokens_used: 10, latency_ms: 200 }}
+      qualitySummary={null}
+      detailLoading={false}
+      uploadFile={null}
+      busy={false}
+      onBook={vi.fn()}
+      onChapter={vi.fn()}
+      onSegment={vi.fn()}
+      onFile={vi.fn()}
+      onUpload={vi.fn()}
+    />
+  );
+  expect(screen.getByText('Original text')).toBeTruthy();
+  expect(screen.getByDisplayValue('Old text')).toBeTruthy();
+  expect(screen.getByRole('button', { name: /save translation/i })).toBeTruthy();
+});
+
+it('shows segment position and disables previous/next at boundaries', () => {
+  const segments = [
+    { id: 1, chapter_id: 10, segment_number: 1, original_text: 'First', translated_text: 'One', confidence: 0.8, model_used: 'gpt-4o', status: 'translated', qa_score: 80, qa_status: 'passed', qa_comment: null, translation_profile: 'general', tokens_used: 5, latency_ms: 100 },
+    { id: 2, chapter_id: 10, segment_number: 2, original_text: 'Second', translated_text: 'Two', confidence: 0.8, model_used: 'gpt-4o', status: 'translated', qa_score: 80, qa_status: 'passed', qa_comment: null, translation_profile: 'general', tokens_used: 5, latency_ms: 100 },
+    { id: 3, chapter_id: 10, segment_number: 3, original_text: 'Third', translated_text: 'Three', confidence: 0.8, model_used: 'gpt-4o', status: 'translated', qa_score: 80, qa_status: 'passed', qa_comment: null, translation_profile: 'general', tokens_used: 5, latency_ms: 100 },
+  ];
+  render(
+    <BooksView
+      books={[]}
+      selectedBook={null}
+      chapters={[]}
+      selectedChapter={null}
+      segments={segments}
+      selectedSegment={segments[0]}
+      qualitySummary={null}
+      detailLoading={false}
+      uploadFile={null}
+      busy={false}
+      onPrevious={vi.fn()}
+      onNext={vi.fn()}
+      onBook={vi.fn()}
+      onChapter={vi.fn()}
+      onSegment={vi.fn()}
+      onFile={vi.fn()}
+      onUpload={vi.fn()}
+    />
+  );
+  expect(screen.getByText('Segment 1 of 3')).toBeTruthy();
+  const previousButton = screen.getByRole('button', { name: /previous/i }) as HTMLButtonElement;
+  const nextButton = screen.getByRole('button', { name: /next/i }) as HTMLButtonElement;
+  expect(previousButton.disabled).toBe(true);
+  expect(nextButton.disabled).toBe(false);
+});
+
+it('uses the safe translation endpoint for manual  edits and keeps a draft on save failure', async () => {
+  const chapter = { id: 11, book_id: 1, chapter_number: 1, title: 'Intro', content: null, status: 'segmented' };
+  const sourceSegment = { id: 21, chapter_id: 11, segment_number: 1, original_text: 'Source text', translated_text: 'Old translation', confidence: 0.7, model_used: 'gpt-4o', status: 'translated', qa_score: 86, qa_status: 'passed', qa_comment: null, translation_profile: 'general', tokens_used: 14, latency_ms: 30 };
+  const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method || 'GET';
+    if (url.endsWith('/api/v1/books?page=1&page_size=50')) return json({ items: [book] });
+    if (url.endsWith('/api/v1/benchmark-runs?page=1&page_size=50')) return json({ items: [] });
+    if (url.endsWith('/api/v1/books/1')) return json(book);
+    if (url.endsWith('/api/v1/books/1/chapters?page=1&page_size=50')) return json({ items: [chapter] });
+    if (url.endsWith('/api/v1/books/1/quality-summary')) return json({ book_id: 1, total_segments: 1, translated_segments: 1, checked_segments: 1, passed: 1, needs_review: 0, failed: 0, stale_reports: 0, average_score: 86 });
+    if (url.endsWith('/api/v1/chapters/11/segments?page=1&page_size=100')) return json({ items: [sourceSegment] });
+    if (url.endsWith('/api/v1/segments/21/translation-jobs?page=1&page_size=20')) return json([]);
+    if (url.endsWith('/api/v1/segments/21/quality-report')) return json({ code: 'not_found', message: 'Quality report not found.', details: {}, request_id: 'req-missing' }, 404);
+    if (url.endsWith('/api/v1/segments/21/translation') && method === 'PATCH') return json({ code: 'internal_error', message: 'save failed', details: {}, request_id: 'req-fail' }, 500);
+    throw new Error(`Unexpected request: ${method} ${url}`);
+  });
+  vi.stubGlobal('fetch', fetchMock);
+
+  render(<HomePage />);
+  await screen.findByText('Distributed Systems');
+  fireEvent.click(screen.getByText('Distributed Systems'));
+  await screen.findByText('Intro');
+  fireEvent.click(screen.getByText('Intro'));
+  await screen.findByText('Source text');
+  fireEvent.click(screen.getByText('Source text'));
+
+  fireEvent.change(screen.getByLabelText('Translation'), { target: { value: 'Updated translation' } });
+  fireEvent.click(screen.getByRole('button', { name: /save translation/i }));
+
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/v1/segments/21/translation'), expect.objectContaining({ method: 'PATCH' })));
+  expect(screen.getByDisplayValue('Updated translation')).toBeTruthy();
+  expect(screen.getByText('The action could not be completed.')).toBeTruthy();
+});
+
 it('refreshes the translated segment and QA report after a job completes', async () => {
   const chapter = { id: 11, book_id: 1, chapter_number: 1, title: 'Intro', content: null, status: 'segmented' };
   const sourceSegment = { id: 21, chapter_id: 11, segment_number: 1, original_text: 'Source text', translated_text: null, confidence: 0, model_used: null, status: 'pending', qa_score: 0, qa_status: null, qa_comment: null, translation_profile: 'general', tokens_used: 0, latency_ms: 0 };
