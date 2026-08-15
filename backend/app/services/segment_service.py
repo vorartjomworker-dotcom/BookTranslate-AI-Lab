@@ -46,12 +46,36 @@ class SegmentService:
     async def update_segment(self, segment_id: int, payload: dict[str, Any]) -> Segment:
         segment = await self.get_segment(segment_id)
         try:
-            updated = await self.repository.update(segment, payload)
+            if "translated_text" in payload:
+                translated_text = payload["translated_text"]
+                segment.translated_text = translated_text
+                segment.status = "translated" if translated_text is not None and translated_text.strip() else "pending"
+                segment.qa_score = 0
+                segment.qa_status = "stale"
+                segment.qa_comment = "Manual translation edit invalidated the previous QA result."
+                updated = segment
+            else:
+                updated = await self.repository.update(segment, payload)
             await self.session.commit()
             return updated
         except IntegrityError as exc:
             await self.session.rollback()
             raise ConflictError("Segment update violates a database constraint.") from exc
+
+    async def update_segment_translation(self, segment_id: int, payload: dict[str, Any]) -> Segment:
+        segment = await self.get_segment(segment_id)
+        try:
+            translated_text = payload.get("translated_text")
+            segment.translated_text = translated_text
+            segment.status = "translated" if translated_text is not None and translated_text.strip() else "pending"
+            segment.qa_score = 0
+            segment.qa_status = "stale"
+            segment.qa_comment = "Manual translation edit invalidated the previous QA result."
+            await self.session.commit()
+            return segment
+        except IntegrityError as exc:
+            await self.session.rollback()
+            raise ConflictError("Segment translation update violates a database constraint.") from exc
 
     async def delete_segment(self, segment_id: int) -> None:
         segment = await self.get_segment(segment_id)

@@ -22,7 +22,22 @@ class _FakeSession:
 
     async def get(self, model, key):
         if model is Segment:
-            return SimpleNamespace(id=1)
+            return SimpleNamespace(
+                id=1,
+                chapter_id=1,
+                segment_number=1,
+                original_text="Original text",
+                translated_text=None,
+                confidence=0.0,
+                model_used=None,
+                status="pending",
+                qa_score=0,
+                qa_status=None,
+                qa_comment=None,
+                translation_profile="general",
+                tokens_used=0,
+                latency_ms=0,
+            )
         return None
 
     async def execute(self, stmt):
@@ -97,3 +112,42 @@ def test_create_job_succeeds_when_redis_is_unavailable(client: TestClient, fake_
 
     assert response.status_code == 202
     assert response.json()["status"] == "pending_enqueue"
+
+
+def test_manual_translation_patch_updates_only_translated_text(client: TestClient, fake_db_override):
+    response = client.patch("/api/v1/segments/1", json={"translated_text": "Manual translation"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["translated_text"] == "Manual translation"
+    assert payload["original_text"] == "Original text"
+    assert payload["status"] in {"translated", "pending"}
+
+
+def test_manual_translation_endpoint_updates_only_translated_text(client: TestClient, fake_db_override):
+    response = client.patch("/api/v1/segments/1/translation", json={"translated_text": "Manual translation"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["translated_text"] == "Manual translation"
+    assert payload["original_text"] == "Original text"
+    assert payload["status"] in {"translated", "pending"}
+
+
+def test_manual_translation_endpoint_rejects_unsafe_fields(client: TestClient, fake_db_override):
+    response = client.patch(
+        "/api/v1/segments/1/translation",
+        json={"translated_text": "Manual translation", "original_text": "Hacked", "model_used": "ignored"},
+    )
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body["code"] == "validation_error"
+
+
+def test_manual_translation_patch_rejects_unsafe_fields(client: TestClient, fake_db_override):
+    response = client.patch("/api/v1/segments/1", json={"translated_text": "Manual translation", "original_text": "Hacked", "model_used": "ignored"})
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body["code"] == "validation_error"

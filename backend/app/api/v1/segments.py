@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.pagination import MAX_PAGE_SIZE, build_paginated_response, normalize_pagination
 from app.dependencies.db import get_db
-from app.schemas.segment import SegmentCreate, SegmentRead, SegmentUpdate
+from app.schemas.segment import SegmentCreate, SegmentRead, SegmentTranslationUpdate, SegmentUpdate
 from app.services.chapter_service import ChapterService
 from app.services.segment_service import SegmentService
 
@@ -47,6 +47,13 @@ async def create_chapter_segment(
 async def patch_segment(segment_id: int, payload: SegmentUpdate, db: AsyncSession = Depends(get_db)) -> SegmentRead:
     service = SegmentService(db)
     item = await service.update_segment(segment_id, payload.model_dump(exclude_unset=True))
+    return SegmentRead.model_validate(item)
+
+
+@router.patch("/segments/{segment_id}/translation", response_model=SegmentRead)
+async def patch_segment_translation(segment_id: int, payload: SegmentTranslationUpdate, db: AsyncSession = Depends(get_db)) -> SegmentRead:
+    service = SegmentService(db)
+    item = await service.update_segment_translation(segment_id, payload.model_dump(exclude_unset=True))
     return SegmentRead.model_validate(item)
 
 
