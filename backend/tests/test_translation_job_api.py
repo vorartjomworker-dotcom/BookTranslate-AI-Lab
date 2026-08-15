@@ -134,6 +134,14 @@ def test_manual_translation_endpoint_updates_only_translated_text(client: TestCl
     assert payload["status"] in {"translated", "pending"}
 
 
+def test_manual_translation_endpoint_rejects_empty_payload(client: TestClient, fake_db_override):
+    response = client.patch("/api/v1/segments/1/translation", json={})
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body["code"] == "validation_error"
+
+
 def test_manual_translation_endpoint_rejects_unsafe_fields(client: TestClient, fake_db_override):
     response = client.patch(
         "/api/v1/segments/1/translation",

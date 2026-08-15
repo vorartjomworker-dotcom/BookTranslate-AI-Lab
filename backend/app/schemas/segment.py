@@ -44,7 +44,7 @@ class SegmentUpdate(BaseModel):
 
 
 class SegmentTranslationUpdate(BaseModel):
-    translated_text: Optional[str] = Field(default=None)
+    translated_text: str | None = Field(...)
 
     model_config = ConfigDict(from_attributes=True, extra="forbid")
 

@@ -45,11 +45,15 @@ export default function HomePage() {
   const [draftTranslation, setDraftTranslation] = useState('');
   const [draftDirty, setDraftDirty] = useState(false);
   const detailRequestController = useRef<AbortController | null>(null);
+  const saveRequestController = useRef<AbortController | null>(null);
   const saveRequestToken = useRef(0);
   const activeSegmentIdRef = useRef<number | null>(null);
+  const draftTranslationRef = useRef('');
 
   function invalidateSaveRequest() {
     saveRequestToken.current += 1;
+    saveRequestController.current?.abort();
+    saveRequestController.current = null;
     setSaveBusy(false);
   }
 
@@ -59,12 +63,12 @@ export default function HomePage() {
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { void loadBooks(); void loadRuns(); }, []);
 
-  function clearSegmentState() { setSelectedJob(null); setJobs([]); setQualityReport(null); setDraftTranslation(''); setDraftDirty(false); activeSegmentIdRef.current = null; }
+  function clearSegmentState() { setSelectedJob(null); setJobs([]); setQualityReport(null); draftTranslationRef.current = ''; setDraftTranslation(''); setDraftDirty(false); activeSegmentIdRef.current = null; }
   function startDetailRequest() { detailRequestController.current?.abort(); const controller = new AbortController(); detailRequestController.current = controller; return controller; }
   function isAbortError(error: unknown) { return error instanceof DOMException && error.name === 'AbortError'; }
   async function openBook(book: Book) { const controller = startDetailRequest(); invalidateSaveRequest(); clearSegmentState(); setSelectedBook(book); setSelectedChapter(null); setSelectedSegment(null); setChapters([]); setSegments([]); setQualitySummary(null); setDetailLoading(true); setError(''); try { const [bookResponse, chapterResponse, summaryResponse] = await Promise.all([api.get<Book>(`/api/v1/books/${book.id}`, { signal: controller.signal }), api.get<Paginated<Chapter>>(`/api/v1/books/${book.id}/chapters?page=1&page_size=50`, { signal: controller.signal }), api.get<QualitySummary>(`/api/v1/books/${book.id}/quality-summary`, { signal: controller.signal })]); if (controller.signal.aborted) return; setSelectedBook(bookResponse); setChapters(chapterResponse.items || []); setQualitySummary(summaryResponse); } catch (requestError) { if (!isAbortError(requestError)) setError(errorMessage(requestError)); } finally { if (!controller.signal.aborted) setDetailLoading(false); } }
   async function openChapter(chapter: Chapter) { const controller = startDetailRequest(); invalidateSaveRequest(); clearSegmentState(); setSelectedChapter(chapter); setSelectedSegment(null); setSegments([]); setDetailLoading(true); setError(''); try { const response = await api.get<Paginated<Segment>>(`/api/v1/chapters/${chapter.id}/segments?page=1&page_size=100`, { signal: controller.signal }); if (!controller.signal.aborted) setSegments(response.items || []); } catch (requestError) { if (!isAbortError(requestError)) setError(errorMessage(requestError)); } finally { if (!controller.signal.aborted) setDetailLoading(false); } }
-  async function openSegment(segment: Segment) { const controller = startDetailRequest(); invalidateSaveRequest(); clearSegmentState(); activeSegmentIdRef.current = segment.id; setSelectedSegment(segment); setDraftTranslation(segment.translated_text ?? ''); setDraftDirty(false); setError(''); const [jobResponse, reportResponse] = await Promise.allSettled([api.get<TranslationJob[]>(`/api/v1/segments/${segment.id}/translation-jobs?page=1&page_size=20`, { signal: controller.signal }), api.get<QualityReport>(`/api/v1/segments/${segment.id}/quality-report`, { signal: controller.signal })]); if (controller.signal.aborted) return; if (jobResponse.status === 'fulfilled') setJobs(jobResponse.value); if (reportResponse.status === 'fulfilled') setQualityReport(reportResponse.value); else if (reportResponse.reason instanceof ApiError && reportResponse.reason.status !== 404) setError(errorMessage(reportResponse.reason)); if (jobResponse.status === 'rejected' && !isAbortError(jobResponse.reason)) setJobs([]); }
+  async function openSegment(segment: Segment) { const controller = startDetailRequest(); invalidateSaveRequest(); clearSegmentState(); activeSegmentIdRef.current = segment.id; setSelectedSegment(segment); const canonicalDraft = segment.translated_text ?? ''; draftTranslationRef.current = canonicalDraft; setDraftTranslation(canonicalDraft); setDraftDirty(false); setError(''); const [jobResponse, reportResponse] = await Promise.allSettled([api.get<TranslationJob[]>(`/api/v1/segments/${segment.id}/translation-jobs?page=1&page_size=20`, { signal: controller.signal }), api.get<QualityReport>(`/api/v1/segments/${segment.id}/quality-report`, { signal: controller.signal })]); if (controller.signal.aborted) return; if (jobResponse.status === 'fulfilled') setJobs(jobResponse.value); if (reportResponse.status === 'fulfilled') setQualityReport(reportResponse.value); else if (reportResponse.reason instanceof ApiError && reportResponse.reason.status !== 404) setError(errorMessage(reportResponse.reason)); if (jobResponse.status === 'rejected' && !isAbortError(jobResponse.reason)) setJobs([]); }
 
   useEffect(() => {
     if (!draftDirty) return;
@@ -84,23 +88,40 @@ export default function HomePage() {
       return;
     }
     const segmentId = selectedSegment.id;
+    const submittedDraft = draftTranslation;
     const token = ++saveRequestToken.current;
+    const controller = new AbortController();
+    saveRequestController.current = controller;
     setSaveBusy(true);
     setError('');
     try {
-      const updated = await api.patch<Segment>(`/api/v1/segments/${segmentId}/translation`, { translated_text: draftTranslation });
-      if (saveRequestToken.current !== token || activeSegmentIdRef.current !== segmentId) return;
+      const updated = await api.patch<Segment>(
+        `/api/v1/segments/${segmentId}/translation`,
+        { translated_text: submittedDraft },
+        { signal: controller.signal },
+      );
+      if (controller.signal.aborted || saveRequestToken.current !== token || activeSegmentIdRef.current !== segmentId) return;
       const nextSegment = { ...updated, qa_status: 'stale', qa_score: 0, qa_comment: 'Manual translation edit invalidated the previous QA result.' };
       setSelectedSegment(nextSegment);
       setSegments((current) => current.map((item) => item.id === nextSegment.id ? nextSegment : item));
-      setDraftTranslation(nextSegment.translated_text ?? '');
-      setDraftDirty(false);
+      const currentDraft = draftTranslationRef.current;
+      const canonicalDraft = nextSegment.translated_text ?? '';
+      if (currentDraft === submittedDraft) {
+        draftTranslationRef.current = canonicalDraft;
+        setDraftTranslation(canonicalDraft);
+        setDraftDirty(false);
+        setNotice('Translation saved. Prior QA was marked stale.');
+      } else {
+        setDraftDirty(currentDraft !== canonicalDraft);
+        setNotice('Translation saved. Newer edits remain unsaved.');
+      }
       setQualityReport(null);
-      setNotice('Translation saved. Prior QA was marked stale.');
     } catch (requestError) {
+      if (requestError instanceof DOMException && requestError.name === 'AbortError') return;
       if (saveRequestToken.current !== token || activeSegmentIdRef.current !== segmentId) return;
       setError(errorMessage(requestError));
     } finally {
+      if (saveRequestController.current === controller) saveRequestController.current = null;
       if (saveRequestToken.current === token && activeSegmentIdRef.current === segmentId) setSaveBusy(false);
     }
   }, [draftTranslation, saveBusy, selectedSegment]);
@@ -120,6 +141,7 @@ export default function HomePage() {
   }, [selectedSegment?.id, draftTranslation, busy, saveBusy, saveTranslation]);
 
   function handleDraftChange(value: string) {
+    draftTranslationRef.current = value;
     setDraftTranslation(value);
     if (!selectedSegment) {
       setDraftDirty(false);
@@ -135,6 +157,10 @@ export default function HomePage() {
     }
     const proceed = window.confirm('You have unsaved changes. Discard the draft and continue?');
     if (proceed) {
+      const canonicalDraft = selectedSegment?.translated_text ?? '';
+      draftTranslationRef.current = canonicalDraft;
+      setDraftTranslation(canonicalDraft);
+      setDraftDirty(false);
       action();
     }
   }
@@ -162,7 +188,9 @@ export default function HomePage() {
 
   function resetDraft() {
     if (!selectedSegment) return;
-    setDraftTranslation(selectedSegment.translated_text ?? '');
+    const canonicalDraft = selectedSegment.translated_text ?? '';
+    draftTranslationRef.current = canonicalDraft;
+    setDraftTranslation(canonicalDraft);
     setDraftDirty(false);
   }
 
@@ -211,12 +239,30 @@ export default function HomePage() {
     });
     return () => controller.abort();
   }, [section, selectedSegment?.id, selectedJob?.id]);
-  useEffect(() => () => { detailRequestController.current?.abort(); }, []);
+  useEffect(() => () => { detailRequestController.current?.abort(); saveRequestController.current?.abort(); }, []);
 
   async function upload(event: FormEvent<HTMLFormElement>) { event.preventDefault(); if (!uploadFile) { setError('Choose an EPUB or DOCX file.'); return; } const validationError = validateUpload(uploadFile); if (validationError) { setError(validationError); return; } const body = new FormData(); body.append('file', uploadFile); setBusy(true); setError(''); setNotice(''); try { await api.upload('/api/v1/books/upload', body); setUploadFile(null); setNotice('Document uploaded and queued for ingestion.'); await loadBooks(); } catch (requestError) { setError(errorMessage(requestError)); } finally { setBusy(false); } }
   async function createJob() { if (!selectedSegment) return; setBusy(true); setError(''); try { const job = await api.post<TranslationJob>(`/api/v1/segments/${selectedSegment.id}/translation-jobs`, {}); setJobs((current) => [job, ...current]); setSelectedJob(job); setNotice('Translation job queued.'); } catch (requestError) { setError(errorMessage(requestError)); } finally { setBusy(false); } }
   async function retryJob(job: TranslationJob) { if (!canRetryJob(job.status)) return; setBusy(true); setError(''); try { const retry = await api.post<TranslationJob>(`/api/v1/translation-jobs/${job.id}/retry`); setJobs((current) => [retry, ...current]); setSelectedJob(retry); setNotice('Failed job queued for retry.'); } catch (requestError) { setError(errorMessage(requestError)); } finally { setBusy(false); } }
-  async function runQualityCheck() { if (!selectedSegment) return; setBusy(true); setError(''); try { const report = await api.post<QualityReport>(`/api/v1/segments/${selectedSegment.id}/quality-check`, { mode: qualityMode }); setQualityReport(report); setNotice(`${qualityMode} quality check completed.`); } catch (requestError) { setError(errorMessage(requestError)); } finally { setBusy(false); } }
+  async function runQualityCheck() {
+    if (!selectedSegment) return;
+    const segmentId = selectedSegment.id;
+    setBusy(true);
+    setError('');
+    try {
+      const report = await api.post<QualityReport>(`/api/v1/segments/${segmentId}/quality-check`, { mode: qualityMode });
+      if (activeSegmentIdRef.current !== segmentId) return;
+      const qaPatch = { qa_status: report.status, qa_score: report.overall_score, qa_comment: report.summary };
+      setQualityReport(report);
+      setSelectedSegment((current) => current?.id === segmentId ? { ...current, ...qaPatch } : current);
+      setSegments((current) => current.map((item) => item.id === segmentId ? { ...item, ...qaPatch } : item));
+      setNotice(`${qualityMode} quality check completed.`);
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+    } finally {
+      setBusy(false);
+    }
+  }
   async function createBenchmark(event: FormEvent<HTMLFormElement>) { event.preventDefault(); setBusy(true); setError(''); try { const created = await api.post<{ run_id: string }>('/api/v1/benchmark-runs', benchmarkPayload(benchmarkForm.provider, benchmarkForm.model, benchmarkForm.max_cases)); await api.post(`/api/v1/benchmark-runs/${created.run_id}/resume`); setNotice(`Benchmark ${created.run_id} completed in dry-run mode.`); await loadRuns(); } catch (requestError) { setError(errorMessage(requestError)); } finally { setBusy(false); } }
 
   async function openRun(run: BenchmarkRun) { setSelectedRun(run); setDetailLoading(true); setError(''); try { const [detail, cases] = await Promise.all([api.get<BenchmarkRun>(`/api/v1/benchmark-runs/${run.run_id}`), api.get<{ items: BenchmarkCase[] }>(`/api/v1/benchmark-runs/${run.run_id}/cases`)]); setSelectedRun(detail); setBenchmarkCases(cases.items || []); } catch (requestError) { setError(errorMessage(requestError)); } finally { setDetailLoading(false); } }
@@ -225,5 +271,5 @@ export default function HomePage() {
   async function exportRun(run: BenchmarkRun, format: 'json' | 'csv') { try { const blob = await api.get<Blob>(`/api/v1/benchmark-runs/${run.run_id}/export?format=${format}`, { responseType: 'blob', headers: { Accept: format === 'csv' ? 'text/csv' : 'application/json' } }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `${run.run_id}.${format}`; link.click(); URL.revokeObjectURL(link.href); } catch (requestError) { setError(errorMessage(requestError)); } }
 
   const current = sections.find((item) => item.id === section);
-  return <main className="appShell"><aside className="sidebar"><div className="brandMark"><span className="brandGlyph">BT</span><span><strong>BookTranslate</strong><small>AI LAB / WORKSPACE</small></span></div><div className="sidebarLabel">Workspace</div><nav className="sideNav" aria-label="Workspace sections">{sections.map((item) => <button key={item.id} className={section === item.id ? 'navItem active' : 'navItem'} onClick={() => changeSection(item.id)}><span>{item.number}</span>{item.label}</button>)}</nav><div className="sidebarFooter"><span>v0.1.0 / local workspace</span></div></aside><section className="contentArea"><header className="topBar"><div><span className="eyebrow">TRANSLATION OPERATIONS</span><h1>{current?.label}</h1></div><span className="avatar" aria-hidden="true">BT</span></header>{error && <div className="alert alertError" role="alert"><strong>Action blocked</strong><span>{error}</span><button onClick={() => setError('')} aria-label="Dismiss error">×</button></div>}{notice && <div className="alert alertSuccess" role="status" aria-live="polite"><strong>Done</strong><span>{notice}</span><button onClick={() => setNotice('')} aria-label="Dismiss notice">×</button></div>}{loading ? <div className="loadingState"><span className="loader" /> Loading workspace</div> : <>{section === 'books' && <BooksView books={books} selectedBook={selectedBook} chapters={chapters} selectedChapter={selectedChapter} segments={segments} selectedSegment={selectedSegment} qualitySummary={qualitySummary} detailLoading={detailLoading} uploadFile={uploadFile} busy={busy} draftTranslation={draftTranslation} isDirty={draftDirty} canSave={Boolean(selectedSegment) && draftTranslation !== (selectedSegment?.translated_text ?? '') && !busy} onPrevious={() => moveToSegment(-1)} onNext={() => moveToSegment(1)} onDraftChange={handleDraftChange} onSave={saveTranslation} onReset={resetDraft} onBook={(book) => confirmNavigation(() => { void openBook(book); })} onChapter={(chapter) => confirmNavigation(() => { void openChapter(chapter); })} onSegment={(segment) => confirmNavigation(() => { void openSegment(segment); })} onFile={(event) => setUploadFile(event.target.files?.[0] || null)} onUpload={upload} />}{section === 'jobs' && <JobsView segment={selectedSegment} jobs={jobs} selectedJob={selectedJob} busy={busy} onCreate={createJob} onRetry={retryJob} />}{section === 'quality' && <QualityView segment={selectedSegment} report={qualityReport} mode={qualityMode} busy={busy} onMode={setQualityMode} onCheck={runQualityCheck} />}{section === 'benchmarks' && <BenchmarksView runs={runs} selectedRun={selectedRun} cases={benchmarkCases} form={benchmarkForm} busy={busy} detailLoading={detailLoading} onForm={setBenchmarkForm} onCreate={createBenchmark} onRun={openRun} onResume={resumeRun} onCancel={cancelRun} onExport={exportRun} />}</>}</section></main>;
+  return <main className="appShell"><aside className="sidebar"><div className="brandMark"><span className="brandGlyph">BT</span><span><strong>BookTranslate</strong><small>AI LAB / WORKSPACE</small></span></div><div className="sidebarLabel">Workspace</div><nav className="sideNav" aria-label="Workspace sections">{sections.map((item) => <button key={item.id} className={section === item.id ? 'navItem active' : 'navItem'} onClick={() => changeSection(item.id)}><span>{item.number}</span>{item.label}</button>)}</nav><div className="sidebarFooter"><span>v0.1.0 / local workspace</span></div></aside><section className="contentArea"><header className="topBar"><div><span className="eyebrow">TRANSLATION OPERATIONS</span><h1>{current?.label}</h1></div><span className="avatar" aria-hidden="true">BT</span></header>{error && <div className="alert alertError" role="alert"><strong>Action blocked</strong><span>{error}</span><button onClick={() => setError('')} aria-label="Dismiss error">×</button></div>}{notice && <div className="alert alertSuccess" role="status" aria-live="polite"><strong>Done</strong><span>{notice}</span><button onClick={() => setNotice('')} aria-label="Dismiss notice">×</button></div>}{loading ? <div className="loadingState"><span className="loader" /> Loading workspace</div> : <>{section === 'books' && <BooksView books={books} selectedBook={selectedBook} chapters={chapters} selectedChapter={selectedChapter} segments={segments} selectedSegment={selectedSegment} qualitySummary={qualitySummary} detailLoading={detailLoading} uploadFile={uploadFile} busy={busy} draftTranslation={draftTranslation} isDirty={draftDirty} canSave={Boolean(selectedSegment) && draftTranslation !== (selectedSegment?.translated_text ?? '') && !busy && !saveBusy} onPrevious={() => moveToSegment(-1)} onNext={() => moveToSegment(1)} onDraftChange={handleDraftChange} onSave={saveTranslation} onReset={resetDraft} onBook={(book) => confirmNavigation(() => { void openBook(book); })} onChapter={(chapter) => confirmNavigation(() => { void openChapter(chapter); })} onSegment={(segment) => confirmNavigation(() => { void openSegment(segment); })} onFile={(event) => setUploadFile(event.target.files?.[0] || null)} onUpload={upload} />}{section === 'jobs' && <JobsView segment={selectedSegment} jobs={jobs} selectedJob={selectedJob} busy={busy} onCreate={createJob} onRetry={retryJob} />}{section === 'quality' && <QualityView segment={selectedSegment} report={qualityReport} mode={qualityMode} busy={busy} onMode={setQualityMode} onCheck={runQualityCheck} />}{section === 'benchmarks' && <BenchmarksView runs={runs} selectedRun={selectedRun} cases={benchmarkCases} form={benchmarkForm} busy={busy} detailLoading={detailLoading} onForm={setBenchmarkForm} onCreate={createBenchmark} onRun={openRun} onResume={resumeRun} onCancel={cancelRun} onExport={exportRun} />}</>}</section></main>;
 }

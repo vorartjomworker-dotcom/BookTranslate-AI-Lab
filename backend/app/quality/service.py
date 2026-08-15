@@ -277,8 +277,11 @@ class QualityAssuranceService:
         if report is None:
             return None
 
-        current_checksum = sha256_text(segment.translated_text or "")
-        if report.translated_checksum != current_checksum:
+        current_source_checksum = sha256_text(segment.original_text or "")
+        current_translated_checksum = sha256_text(segment.translated_text or "")
+        if report.source_checksum != current_source_checksum:
+            return None
+        if report.translated_checksum != current_translated_checksum:
             return None
         return report
 
@@ -298,29 +301,43 @@ class QualityAssuranceService:
         translated_segments = int((await self.session.execute(translated_stmt)).scalar_one() or 0)
 
         segment_ids_stmt = (
-            select(Segment.id, Segment.translated_text)
+            select(Segment.id, Segment.original_text, Segment.translated_text, Segment.qa_status)
             .join(Chapter, Chapter.id == Segment.chapter_id)
             .where(Chapter.book_id == book_id)
         )
         segment_rows = (await self.session.execute(segment_ids_stmt)).all()
-        segment_translated_checksum = {
-            segment_id: sha256_text(translated_text or "") for segment_id, translated_text in segment_rows
+        segment_freshness = {
+            segment_id: (
+                sha256_text(original_text or ""),
+                sha256_text(translated_text or ""),
+                qa_status,
+            )
+            for segment_id, original_text, translated_text, qa_status in segment_rows
         }
-        segment_ids = list(segment_translated_checksum)
+        segment_ids = list(segment_freshness)
 
         latest_reports = await self.repository.list_latest_by_segments(segment_ids)
-
-        checked_segments = len(latest_reports)
-        passed = sum(1 for report in latest_reports.values() if report.status == "passed")
-        needs_review = sum(1 for report in latest_reports.values() if report.status == "needs_review")
-        failed = sum(1 for report in latest_reports.values() if report.status == "failed")
-        stale_reports = sum(
-            1
+        stale_segment_ids = {
+            segment_id
             for segment_id, report in latest_reports.items()
-            if report.translated_checksum != segment_translated_checksum.get(segment_id)
-        )
+            if segment_id not in segment_freshness
+            or segment_freshness[segment_id][2] == "stale"
+            or report.source_checksum != segment_freshness[segment_id][0]
+            or report.translated_checksum != segment_freshness[segment_id][1]
+        }
+        current_reports = {
+            segment_id: report
+            for segment_id, report in latest_reports.items()
+            if segment_id not in stale_segment_ids
+        }
+
+        checked_segments = len(current_reports)
+        passed = sum(1 for report in current_reports.values() if report.status == "passed")
+        needs_review = sum(1 for report in current_reports.values() if report.status == "needs_review")
+        failed = sum(1 for report in current_reports.values() if report.status == "failed")
+        stale_reports = len(stale_segment_ids)
         average_score = (
-            sum(report.overall_score for report in latest_reports.values()) / checked_segments if checked_segments else None
+            sum(report.overall_score for report in current_reports.values()) / checked_segments if checked_segments else None
         )
 
         return BookQualitySummary(
@@ -362,4 +379,3 @@ class QualityAssuranceService:
         segment.qa_score = int(report.overall_score)
         segment.qa_status = report.status
         segment.qa_comment = report.summary
-
