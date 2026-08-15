@@ -27,13 +27,20 @@ class SegmentCreate(SegmentBase):
 
 
 class SegmentUpdate(BaseModel):
-    translated_text: Optional[str] = Field(default=None)
+    segment_number: Optional[int] = Field(default=None, ge=1)
+    original_text: Optional[str] = Field(default=None, min_length=1)
+    translated_text: Optional[str] = None
+    confidence: Optional[float] = Field(default=None, ge=0.0)
+    model_used: Optional[str] = Field(default=None, max_length=100)
     status: Optional[str] = Field(default=None, min_length=1, max_length=50)
     qa_score: Optional[int] = Field(default=None, ge=0)
     qa_status: Optional[str] = Field(default=None, max_length=50)
-    qa_comment: Optional[str] = Field(default=None)
+    qa_comment: Optional[str] = None
+    translation_profile: Optional[str] = Field(default=None, min_length=1, max_length=50)
+    tokens_used: Optional[int] = Field(default=None, ge=0)
+    latency_ms: Optional[int] = Field(default=None, ge=0)
 
-    model_config = ConfigDict(from_attributes=True, extra="forbid")
+    model_config = ConfigDict(from_attributes=True)
 
 
 class SegmentTranslationUpdate(BaseModel):

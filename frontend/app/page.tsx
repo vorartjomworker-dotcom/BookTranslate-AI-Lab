@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useEffect, useRef, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiError, ApiTimeoutError } from './lib/api';
 import type { BenchmarkCase, BenchmarkRun, Book, Chapter, Paginated, QualityReport, QualitySummary, Segment, TranslationJob } from './lib/types';
 import { benchmarkPayload, canRetryJob, pollUntilTerminal, validateUpload } from './lib/workflow';
@@ -36,6 +36,7 @@ export default function HomePage() {
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [saveBusy, setSaveBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [uploadFile, setUploadFile] = useState<File | null>(null);
@@ -49,6 +50,7 @@ export default function HomePage() {
 
   function invalidateSaveRequest() {
     saveRequestToken.current += 1;
+    setSaveBusy(false);
   }
 
   async function loadBooks() { setLoading(true); setError(''); try { const response = await api.get<Paginated<Book>>('/api/v1/books?page=1&page_size=50'); setBooks(response.items || []); } catch (requestError) { setError(errorMessage(requestError)); } finally { setLoading(false); } }
@@ -74,19 +76,48 @@ export default function HomePage() {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [draftDirty]);
 
+  const saveTranslation = useCallback(async () => {
+    if (!selectedSegment || saveBusy) return;
+    const original = selectedSegment.translated_text ?? '';
+    if (draftTranslation === original) {
+      setDraftDirty(false);
+      return;
+    }
+    const segmentId = selectedSegment.id;
+    const token = ++saveRequestToken.current;
+    setSaveBusy(true);
+    setError('');
+    try {
+      const updated = await api.patch<Segment>(`/api/v1/segments/${segmentId}/translation`, { translated_text: draftTranslation });
+      if (saveRequestToken.current !== token || activeSegmentIdRef.current !== segmentId) return;
+      const nextSegment = { ...updated, qa_status: 'stale', qa_score: 0, qa_comment: 'Manual translation edit invalidated the previous QA result.' };
+      setSelectedSegment(nextSegment);
+      setSegments((current) => current.map((item) => item.id === nextSegment.id ? nextSegment : item));
+      setDraftTranslation(nextSegment.translated_text ?? '');
+      setDraftDirty(false);
+      setQualityReport(null);
+      setNotice('Translation saved. Prior QA was marked stale.');
+    } catch (requestError) {
+      if (saveRequestToken.current !== token || activeSegmentIdRef.current !== segmentId) return;
+      setError(errorMessage(requestError));
+    } finally {
+      if (saveRequestToken.current === token && activeSegmentIdRef.current === segmentId) setSaveBusy(false);
+    }
+  }, [draftTranslation, saveBusy, selectedSegment]);
+
   useEffect(() => {
     if (!selectedSegment) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
         event.preventDefault();
-        if (!busy && draftTranslation !== (selectedSegment.translated_text ?? '')) {
+        if (!busy && !saveBusy && draftTranslation !== (selectedSegment.translated_text ?? '')) {
           void saveTranslation();
         }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedSegment?.id, draftTranslation, busy]);
+  }, [selectedSegment?.id, draftTranslation, busy, saveBusy, saveTranslation]);
 
   function handleDraftChange(value: string) {
     setDraftTranslation(value);
@@ -111,6 +142,7 @@ export default function HomePage() {
   function changeSection(nextSection: Section) {
     if (section === nextSection) return;
     confirmNavigation(() => {
+      invalidateSaveRequest();
       setSection(nextSection);
     });
   }
@@ -121,39 +153,11 @@ export default function HomePage() {
     const nextIndex = index + offset;
     if (nextIndex < 0 || nextIndex >= segments.length) return;
     confirmNavigation(() => {
+      invalidateSaveRequest();
       const nextSegment = segments[nextIndex];
       if (!nextSegment) return;
       void openSegment(nextSegment);
     });
-  }
-
-  async function saveTranslation() {
-    if (!selectedSegment || busy) return;
-    const original = selectedSegment.translated_text ?? '';
-    if (draftTranslation === original) {
-      setDraftDirty(false);
-      return;
-    }
-    const segmentId = selectedSegment.id;
-    const token = ++saveRequestToken.current;
-    setBusy(true);
-    setError('');
-    try {
-      const updated = await api.patch<Segment>(`/api/v1/segments/${segmentId}/translation`, { translated_text: draftTranslation });
-      if (saveRequestToken.current !== token || activeSegmentIdRef.current !== segmentId) return;
-      const nextSegment = { ...updated, qa_status: 'stale', qa_score: 0, qa_comment: 'Manual translation edit invalidated the previous QA result.' };
-      setSelectedSegment(nextSegment);
-      setSegments((current) => current.map((item) => item.id === nextSegment.id ? nextSegment : item));
-      setDraftTranslation(nextSegment.translated_text ?? '');
-      setDraftDirty(false);
-      setQualityReport(null);
-      setNotice('Translation saved. Prior QA was marked stale.');
-    } catch (requestError) {
-      if (saveRequestToken.current !== token || activeSegmentIdRef.current !== segmentId) return;
-      setError(errorMessage(requestError));
-    } finally {
-      if (saveRequestToken.current === token && activeSegmentIdRef.current === segmentId) setBusy(false);
-    }
   }
 
   function resetDraft() {

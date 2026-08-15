@@ -145,12 +145,17 @@ def test_manual_translation_endpoint_rejects_unsafe_fields(client: TestClient, f
     assert body["code"] == "validation_error"
 
 
-def test_manual_translation_patch_rejects_unsafe_fields(client: TestClient, fake_db_override):
-    response = client.patch("/api/v1/segments/1", json={"translated_text": "Manual translation", "original_text": "Hacked", "model_used": "ignored"})
+def test_manual_translation_patch_accepts_legacy_compatibility_fields(client: TestClient, fake_db_override):
+    response = client.patch(
+        "/api/v1/segments/1",
+        json={"translated_text": "Manual translation", "original_text": "Hacked", "model_used": "ignored"},
+    )
 
-    assert response.status_code == 422
-    body = response.json()
-    assert body["code"] == "validation_error"
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["translated_text"] == "Manual translation"
+    assert payload["original_text"] == "Hacked"
+    assert payload["model_used"] == "ignored"
 
 
 def test_manual_translation_patch_preserves_legacy_status_fields(client: TestClient, fake_db_override):
@@ -158,6 +163,35 @@ def test_manual_translation_patch_preserves_legacy_status_fields(client: TestCli
 
     assert response.status_code == 200
     payload = response.json()
+    assert payload["status"] == "translated"
+    assert payload["qa_status"] == "stale"
+    assert payload["qa_score"] == 0
+
+
+def test_generic_segment_patch_accepts_legacy_compatibility_fields(client: TestClient, fake_db_override):
+    response = client.patch(
+        "/api/v1/segments/1",
+        json={
+            "segment_number": 2,
+            "original_text": "Updated original text",
+            "translated_text": "Manual translation",
+            "confidence": 0.95,
+            "model_used": "gpt-4o",
+            "status": "translated",
+            "qa_score": 0,
+            "qa_status": "stale",
+            "qa_comment": "manually updated",
+            "translation_profile": "technical",
+            "tokens_used": 42,
+            "latency_ms": 120,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["segment_number"] == 2
+    assert payload["original_text"] == "Updated original text"
+    assert payload["translated_text"] == "Manual translation"
     assert payload["status"] == "translated"
     assert payload["qa_status"] == "stale"
     assert payload["qa_score"] == 0
