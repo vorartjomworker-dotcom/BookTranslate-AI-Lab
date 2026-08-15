@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.benchmarks.types import PricingSnapshot
+from app.core.exceptions import ValidationError
 
 
 DEFAULT_PRICING_SNAPSHOTS: dict[str, PricingSnapshot] = {
@@ -37,29 +38,26 @@ DEFAULT_PRICING_SNAPSHOTS: dict[str, PricingSnapshot] = {
 }
 
 
+def supported_provider_models() -> dict[str, tuple[str, ...]]:
+    result: dict[str, list[str]] = {}
+    for snapshot in DEFAULT_PRICING_SNAPSHOTS.values():
+        result.setdefault(snapshot.provider, []).append(snapshot.model)
+    return {provider: tuple(sorted(models)) for provider, models in result.items()}
+
+
 def get_pricing_snapshot(provider: str, model: str | None = None) -> PricingSnapshot:
-    provider_name = (provider or "openai").strip().lower()
-    model_name = (model or "gpt-4o").strip()
-    key = f"{provider_name}:{model_name}"
-    snapshot = DEFAULT_PRICING_SNAPSHOTS.get(key)
-    if snapshot is not None:
-        return snapshot
-    if provider_name == "openai":
-        return DEFAULT_PRICING_SNAPSHOTS["openai:gpt-4o"]
-    if provider_name == "anthropic":
-        return DEFAULT_PRICING_SNAPSHOTS["anthropic:claude-3-5-sonnet-20240620"]
-    if provider_name == "deepl":
-        return DEFAULT_PRICING_SNAPSHOTS["deepl:free"]
-    return PricingSnapshot(
-        provider=provider_name,
-        model=model_name,
-        currency="USD",
-        input_cost_per_1k_tokens=0.0,
-        output_cost_per_1k_tokens=0.0,
-        effective_date="2026-08-15",
-        version="2026.08.15",
-        source="fallback benchmark snapshot",
-    )
+    provider_name = (provider or "").strip().lower()
+    model_name = (model or "").strip()
+    snapshot = DEFAULT_PRICING_SNAPSHOTS.get(f"{provider_name}:{model_name}")
+    if snapshot is None:
+        supported = supported_provider_models()
+        raise ValidationError(
+            "Unsupported benchmark provider/model combination.",
+            details={
+                "supported_provider_models": supported,
+            },
+        )
+    return snapshot
 
 
 def estimate_cost_usd(snapshot: PricingSnapshot, *, input_tokens: int, output_tokens: int) -> float:
