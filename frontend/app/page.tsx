@@ -49,7 +49,51 @@ export default function HomePage() {
   async function openChapter(chapter: Chapter) { const controller = startDetailRequest(); clearSegmentState(); setSelectedChapter(chapter); setSelectedSegment(null); setSegments([]); setDetailLoading(true); setError(''); try { const response = await api.get<Paginated<Segment>>(`/api/v1/chapters/${chapter.id}/segments?page=1&page_size=100`, { signal: controller.signal }); if (!controller.signal.aborted) setSegments(response.items || []); } catch (requestError) { if (!isAbortError(requestError)) setError(errorMessage(requestError)); } finally { if (!controller.signal.aborted) setDetailLoading(false); } }
   async function openSegment(segment: Segment) { const controller = startDetailRequest(); clearSegmentState(); setSelectedSegment(segment); setError(''); const [jobResponse, reportResponse] = await Promise.allSettled([api.get<TranslationJob[]>(`/api/v1/segments/${segment.id}/translation-jobs?page=1&page_size=20`, { signal: controller.signal }), api.get<QualityReport>(`/api/v1/segments/${segment.id}/quality-report`, { signal: controller.signal })]); if (controller.signal.aborted) return; if (jobResponse.status === 'fulfilled') setJobs(jobResponse.value); if (reportResponse.status === 'fulfilled') setQualityReport(reportResponse.value); else if (reportResponse.reason instanceof ApiError && reportResponse.reason.status !== 404) setError(errorMessage(reportResponse.reason)); if (jobResponse.status === 'rejected' && !isAbortError(jobResponse.reason)) setJobs([]); }
 
-  useEffect(() => { if (section !== 'jobs' || !selectedSegment || !selectedJob || selectedJob.segment_id !== selectedSegment.id || selectedJob.status === 'completed' || selectedJob.status === 'failed') return; const controller = new AbortController(); void pollUntilTerminal(() => api.get<TranslationJob>(`/api/v1/translation-jobs/${selectedJob.id}`, { signal: controller.signal }), { signal: controller.signal, intervalMs: 1200, onUpdate: (job) => { if (controller.signal.aborted) return; setSelectedJob(job); setJobs((current) => current.map((item) => item.id === job.id ? job : item)); } }).catch((pollError) => { if (!(pollError instanceof DOMException && pollError.name === 'AbortError')) setError(errorMessage(pollError)); }); return () => controller.abort(); }, [section, selectedSegment?.id, selectedJob?.id]);
+  async function refreshCompletedSegment(segmentId: number, signal: AbortSignal) {
+    const [segmentResponse, reportResponse] = await Promise.allSettled([
+      api.get<Segment>(`/api/v1/segments/${segmentId}`, { signal }),
+      api.get<QualityReport>(`/api/v1/segments/${segmentId}/quality-report`, { signal }),
+    ]);
+    if (signal.aborted) return;
+    if (segmentResponse.status === 'fulfilled') {
+      setSelectedSegment((current) => current?.id === segmentId ? segmentResponse.value : current);
+      setSegments((current) => current.map((item) => item.id === segmentId ? segmentResponse.value : item));
+    } else if (!isAbortError(segmentResponse.reason)) {
+      setError(errorMessage(segmentResponse.reason));
+    }
+    if (reportResponse.status === 'fulfilled') {
+      setQualityReport(reportResponse.value);
+    } else if (reportResponse.reason instanceof ApiError && reportResponse.reason.status === 404) {
+      setQualityReport(null);
+    } else if (!isAbortError(reportResponse.reason)) {
+      setError(errorMessage(reportResponse.reason));
+    }
+  }
+
+  useEffect(() => {
+    if (section !== 'jobs' || !selectedSegment || !selectedJob || selectedJob.segment_id !== selectedSegment.id || selectedJob.status === 'completed' || selectedJob.status === 'failed') return;
+    const controller = new AbortController();
+    const segmentId = selectedSegment.id;
+    const jobId = selectedJob.id;
+    void pollUntilTerminal(
+      () => api.get<TranslationJob>(`/api/v1/translation-jobs/${jobId}`, { signal: controller.signal }),
+      {
+        signal: controller.signal,
+        intervalMs: 1200,
+        onUpdate: (job) => {
+          if (controller.signal.aborted) return;
+          setSelectedJob(job);
+          setJobs((current) => current.map((item) => item.id === job.id ? job : item));
+        },
+      },
+    ).then(async (terminalJob) => {
+      if (controller.signal.aborted || terminalJob.status !== 'completed') return;
+      await refreshCompletedSegment(segmentId, controller.signal);
+    }).catch((pollError) => {
+      if (!(pollError instanceof DOMException && pollError.name === 'AbortError')) setError(errorMessage(pollError));
+    });
+    return () => controller.abort();
+  }, [section, selectedSegment?.id, selectedJob?.id]);
   useEffect(() => () => { detailRequestController.current?.abort(); }, []);
 
   async function upload(event: FormEvent<HTMLFormElement>) { event.preventDefault(); if (!uploadFile) { setError('Choose an EPUB or DOCX file.'); return; } const validationError = validateUpload(uploadFile); if (validationError) { setError(validationError); return; } const body = new FormData(); body.append('file', uploadFile); setBusy(true); setError(''); setNotice(''); try { await api.upload('/api/v1/books/upload', body); setUploadFile(null); setNotice('Document uploaded and queued for ingestion.'); await loadBooks(); } catch (requestError) { setError(errorMessage(requestError)); } finally { setBusy(false); } }

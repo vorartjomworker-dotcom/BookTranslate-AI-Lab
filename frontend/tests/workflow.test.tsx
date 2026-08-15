@@ -1,12 +1,13 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import HomePage from '../app/page';
 import { BooksView, BenchmarksView, QualityView } from '../app/components/views';
 import { bookRowLabel, failedJobMessage, qualityIssueCount } from '../app/lib/presenters';
 import { benchmarkPayload, canRetryJob, pollUntilTerminal, validateUpload } from '../app/lib/workflow';
 import type { Book, QualityReport, TranslationJob } from '../app/lib/types';
 
-afterEach(() => cleanup());
+afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 const book: Book = { id: 1, title: 'Distributed Systems', author: 'A. Writer', description: null, file_path: 'book.epub', file_type: 'epub', language: 'en', status: 'uploaded' };
 const failedJob: TranslationJob = { id: 2, segment_id: 1, provider: 'openai', model: 'gpt-4o', status: 'failed', attempt: 3, max_attempts: 3, retry_of_id: null, error_code: 'provider_unavailable_error', error_message: 'hidden', created_at: null, queued_at: null, started_at: null, completed_at: null, failed_at: null, request_id: 'req-1' };
@@ -23,6 +24,54 @@ it('renders the safe benchmark dry-run form', () => { render(<BenchmarksView run
 it('maps every benchmark provider to its supported model', () => { const onForm = vi.fn(); render(<BenchmarksView runs={[]} selectedRun={null} cases={[]} form={{ provider: 'openai', model: 'gpt-4o', max_cases: 5 }} busy={false} detailLoading={false} onForm={onForm} onCreate={vi.fn()} onRun={vi.fn()} onResume={vi.fn()} onCancel={vi.fn()} onExport={vi.fn()} />); fireEvent.change(screen.getByLabelText('Provider'), { target: { value: 'deepl' } }); expect(onForm).toHaveBeenCalledWith(expect.objectContaining({ provider: 'deepl', model: 'free' })); });
 it('requires explicit benchmark cancellation confirmation', () => { const onCancel = vi.fn(); const run = { run_id: 'run-1', provider: 'openai', model: 'gpt-4o', status: 'running', dataset_name: 'technical_translation', dataset_version: '2026.08.15', metrics: {}, category_metrics: {}, created_at: null }; render(<BenchmarksView runs={[run]} selectedRun={run} cases={[]} form={{ provider: 'openai', model: 'gpt-4o', max_cases: 5 }} busy={false} detailLoading={false} onForm={vi.fn()} onCreate={vi.fn()} onRun={vi.fn()} onResume={vi.fn()} onCancel={onCancel} onExport={vi.fn()} />); fireEvent.click(screen.getByRole('button', { name: 'Cancel' })); expect(onCancel).not.toHaveBeenCalled(); fireEvent.click(screen.getByRole('button', { name: 'Cancel run' })); expect(onCancel).toHaveBeenCalledWith(run); });
 it('renders persisted benchmark category metrics without recalculation', () => { const run = { run_id: 'run-1', provider: 'openai', model: 'gpt-4o', status: 'completed', dataset_name: 'technical_translation', dataset_version: '2026.08.15', metrics: { case_count: 2 }, category_metrics: { terminology: { case_count: 2, success_rate: 50, average_qa_score: 72, p95_latency_ms: 140, total_estimated_cost_usd: 0.01 } }, created_at: null }; render(<BenchmarksView runs={[run]} selectedRun={run} cases={[]} form={{ provider: 'openai', model: 'gpt-4o', max_cases: 5 }} busy={false} detailLoading={false} onForm={vi.fn()} onCreate={vi.fn()} onRun={vi.fn()} onResume={vi.fn()} onCancel={vi.fn()} onExport={vi.fn()} />); expect(screen.getByText('terminology')).toBeTruthy(); expect(screen.getByText('50% success')).toBeTruthy(); expect(screen.getByText('72 QA')).toBeTruthy(); });
+
+it('refreshes the translated segment and QA report after a job completes', async () => {
+  const chapter = { id: 11, book_id: 1, chapter_number: 1, title: 'Intro', content: null, status: 'segmented' };
+  const sourceSegment = { id: 21, chapter_id: 11, segment_number: 1, original_text: 'Source text', translated_text: null, confidence: 0, model_used: null, status: 'pending', qa_score: 0, qa_status: null, qa_comment: null, translation_profile: 'general', tokens_used: 0, latency_ms: 0 };
+  const translatedSegment = { ...sourceSegment, translated_text: 'Fresh translation', confidence: 0.98, model_used: 'gpt-4o', status: 'translated', qa_score: 96, qa_status: 'passed', tokens_used: 12, latency_ms: 30 };
+  const report = { id: 31, segment_id: 21, translation_job_id: 41, evaluator_version: '1.0.0', mode: 'deterministic', deterministic_score: 96, ai_score: null, overall_score: 96, evaluator_error_code: null, score: 96, status: 'passed', summary: 'Fresh QA report', provider: 'openai', model: 'gpt-4o', source_language: 'en', target_language: 'ru', ai_evaluated: false, issues: [], created_at: null, updated_at: null };
+  const queuedJob = { id: 41, segment_id: 21, provider: 'openai', model: 'gpt-4o', status: 'pending_enqueue', attempt: 0, max_attempts: 3, retry_of_id: null, error_code: null, error_message: null, created_at: null, queued_at: null, started_at: null, completed_at: null, failed_at: null, request_id: 'req-41' };
+  const completedJob = { ...queuedJob, status: 'completed', attempt: 1, completed_at: '2026-08-15T04:30:00Z' };
+  let qualityReads = 0;
+  const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method || 'GET';
+    if (url.endsWith('/api/v1/books?page=1&page_size=50')) return json({ items: [book] });
+    if (url.endsWith('/api/v1/benchmark-runs?page=1&page_size=50')) return json({ items: [] });
+    if (url.endsWith('/api/v1/books/1/chapters?page=1&page_size=50')) return json({ items: [chapter] });
+    if (url.endsWith('/api/v1/books/1/quality-summary')) return json({ book_id: 1, total_segments: 1, translated_segments: 0, checked_segments: 0, passed: 0, needs_review: 0, failed: 0, stale_reports: 0, average_score: null });
+    if (url.endsWith('/api/v1/books/1')) return json(book);
+    if (url.endsWith('/api/v1/chapters/11/segments?page=1&page_size=100')) return json({ items: [sourceSegment] });
+    if (url.endsWith('/api/v1/segments/21/translation-jobs?page=1&page_size=20') && method === 'GET') return json([]);
+    if (url.endsWith('/api/v1/segments/21/translation-jobs') && method === 'POST') return json(queuedJob, 202);
+    if (url.endsWith('/api/v1/translation-jobs/41')) return json(completedJob);
+    if (url.endsWith('/api/v1/segments/21') && method === 'GET') return json(translatedSegment);
+    if (url.endsWith('/api/v1/segments/21/quality-report')) {
+      qualityReads += 1;
+      if (qualityReads === 1) return json({ code: 'not_found', message: 'Quality report not found.', details: {}, request_id: 'req-missing' }, 404);
+      return json(report);
+    }
+    throw new Error(`Unexpected request: ${method} ${url}`);
+  });
+  vi.stubGlobal('fetch', fetchMock);
+
+  render(<HomePage />);
+  await screen.findByText('Distributed Systems');
+  fireEvent.click(screen.getByText('Distributed Systems'));
+  await screen.findByText('Intro');
+  fireEvent.click(screen.getByText('Intro'));
+  await screen.findByText('Source text');
+  fireEvent.click(screen.getByText('Source text'));
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/segments/21/translation-jobs'), expect.anything()));
+  fireEvent.click(screen.getByRole('button', { name: 'Translation Jobs' }));
+  fireEvent.click(screen.getByRole('button', { name: /Queue translation/i }));
+
+  await screen.findByText('Fresh translation');
+  fireEvent.click(screen.getByRole('button', { name: 'Quality' }));
+  await screen.findByText('Fresh QA report');
+  expect(qualityReads).toBe(2);
+});
 
 describe('job polling', () => {
   it('stops scheduling requests when the polling component unmounts', async () => {
