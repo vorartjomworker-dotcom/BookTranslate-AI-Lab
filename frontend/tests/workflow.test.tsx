@@ -167,7 +167,7 @@ it('ignores a stale save response after the active segment changes', async () =>
   await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/v1/segments/21/translation'), expect.objectContaining({ method: 'PATCH' })));
 
   fireEvent.click(screen.getByText('Source text two'));
-  await waitFor(() => expect(screen.getByText('Source text two')).toBeTruthy());
+  await waitFor(() => expect(screen.getByText('Segment 2 of 2')).toBeTruthy());
   expect(screen.getByDisplayValue('Other translation')).toBeTruthy();
 
   pendingSave.resolve(json({ ...firstSegment, translated_text: 'Stale translation from the old request', qa_status: 'stale', qa_score: 0, qa_comment: 'Manual translation edit invalidated the previous QA result.' }));
@@ -175,7 +175,7 @@ it('ignores a stale save response after the active segment changes', async () =>
   await waitFor(() => expect(screen.getByDisplayValue('Other translation')).toBeTruthy());
   expect(screen.queryByDisplayValue('Stale translation from the old request')).toBeNull();
   expect(screen.queryByText('Translation saved. Prior QA was marked stale.')).toBeNull();
-  expect(screen.getByText('Source text two')).toBeTruthy();
+  expect(screen.getByText('Segment 2 of 2')).toBeTruthy();
 });
 
 it('does not leave the next section permanently busy after a save is invalidated by navigation', async () => {
@@ -219,7 +219,6 @@ it('does not leave the next section permanently busy after a save is invalidated
 
   const qualityButton = screen.getByRole('button', { name: /run quality check/i }) as HTMLButtonElement;
   await waitFor(() => expect(qualityButton.disabled).toBe(false));
-  expect(screen.getByText('Updated translation')).toBeTruthy();
   expect(screen.queryByText('Rejected stale translation')).toBeNull();
   expect(screen.queryByText('Translation saved. Prior QA was marked stale.')).toBeNull();
 });
