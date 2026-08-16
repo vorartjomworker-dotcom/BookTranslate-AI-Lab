@@ -4,12 +4,14 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 
 import { AuthProvider } from '../app/AuthProvider';
 import HomePage from '../app/page';
+import { setAccessToken } from '../app/lib/api';
 import type { Book, Segment } from '../app/lib/types';
 
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  setAccessToken(null);
 });
 
 const book: Book = {
