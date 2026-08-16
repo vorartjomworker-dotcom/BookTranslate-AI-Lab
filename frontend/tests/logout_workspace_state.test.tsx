@@ -181,6 +181,63 @@ it('preserves an unsaved draft across session-expiry reauthentication', async ()
   expect(screen.getByText('Intro')).toBeTruthy();
 });
 
+it('rejects a wrong password during session-expiry reauthentication without exposing or discarding the preserved workspace', async () => {
+  let loginAttempts = 0;
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method || 'GET';
+    if (url.endsWith('/api/v1/auth/login') && method === 'POST') {
+      loginAttempts += 1;
+      if (loginAttempts === 1) return json({ access_token: 'test-token', token_type: 'bearer', expires_in: 900, user: editorUser });
+      if (loginAttempts === 2) return json({ code: 'unauthorized', message: 'Invalid email or password.', details: {}, request_id: 'req-wrong-retry' }, 401);
+      return json({ access_token: 'test-token-2', token_type: 'bearer', expires_in: 900, user: editorUser });
+    }
+    if (url.endsWith('/api/v1/segments/21/translation') && method === 'PATCH') {
+      return json({ code: 'unauthorized', message: 'Your session has expired. Please log in again.', details: {}, request_id: 'req-expired' }, 401);
+    }
+    const workspaceResponse = workspaceRoutes(url, method);
+    if (workspaceResponse) return workspaceResponse;
+    throw new Error(`Unexpected request: ${method} ${url}`);
+  });
+  vi.stubGlobal('fetch', fetchMock);
+
+  render(<AuthProvider><HomePage /></AuthProvider>);
+  await signIn();
+  await openEditor();
+
+  fireEvent.change(screen.getByLabelText('Translation'), { target: { value: 'Unsaved draft text' } });
+  fireEvent.click(screen.getByRole('button', { name: /save translation/i }));
+
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+    expect.stringContaining('/api/v1/segments/21/translation'),
+    expect.objectContaining({ method: 'PATCH' }),
+  ));
+  await screen.findByRole('alertdialog', { name: 'Session expired' });
+
+  fireEvent.click(screen.getByRole('button', { name: /log in again/i }));
+  await screen.findByRole('heading', { name: 'Sign in' });
+
+  // Wrong password on the reauthentication attempt: must fail as invalid credentials,
+  // not be mistaken for (or announce) a session-expiry state, and must not reveal or
+  // discard the workspace/draft that is still pending behind the gate.
+  fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'editor@example.com' } });
+  fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'still-wrong-password' } });
+  fireEvent.click(screen.getByRole('button', { name: /sign in/i }));
+
+  await screen.findByText('Sign-in failed');
+  expect(screen.getByText('Invalid email or password.')).toBeTruthy();
+  expect(screen.queryByText(/session has expired/i)).toBeNull();
+  expect(screen.queryByDisplayValue('Unsaved draft text')).toBeNull();
+  expect(screen.queryByText('Distributed Systems')).toBeNull();
+
+  // A subsequent correct login by the same user must still restore the preserved draft.
+  fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'correct-password' } });
+  fireEvent.click(screen.getByRole('button', { name: /sign in/i }));
+
+  await screen.findByDisplayValue('Unsaved draft text');
+  expect(screen.getAllByText('Distributed Systems').length).toBeGreaterThan(0);
+});
+
 it('remounts and clears the previous user workspace when a different user reauthenticates after session expiry', async () => {
   const otherUser = {
     id: 2,

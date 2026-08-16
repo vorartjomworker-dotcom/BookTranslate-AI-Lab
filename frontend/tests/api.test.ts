@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, request } from '../app/lib/api';
+import { ApiError, request, setAccessToken, setUnauthorizedHandler } from '../app/lib/api';
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  setAccessToken(null);
+  setUnauthorizedHandler(null);
+});
 
 describe('typed API client', () => {
   it('returns JSON on success', async () => {
@@ -43,5 +47,41 @@ describe('typed API client', () => {
     const pending = request('/api/v1/translation-jobs/1', { signal: controller.signal });
     controller.abort();
     await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
+  it('shows a neutral invalid-credentials message for a 401 with no bearer token and does not fire the unauthorized handler', async () => {
+    const unauthorizedHandler = vi.fn();
+    setUnauthorizedHandler(unauthorizedHandler);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 'unauthorized', message: 'Invalid email or password.', details: {}, request_id: 'req-login' }), { status: 401 })));
+
+    const error: ApiError = await request<never>('/api/v1/auth/login', { method: 'POST' }).catch((value) => value as ApiError);
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error.message).toBe('Invalid email or password.');
+    expect(error.message).not.toMatch(/session/i);
+    expect(unauthorizedHandler).not.toHaveBeenCalled();
+  });
+
+  it('never surfaces the raw backend message for an unauthenticated 401, even if it differs from the safe default', async () => {
+    const unauthorizedHandler = vi.fn();
+    setUnauthorizedHandler(unauthorizedHandler);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 'unauthorized', message: 'This account is inactive.', details: {}, request_id: 'req-inactive' }), { status: 401 })));
+
+    const error: ApiError = await request<never>('/api/v1/auth/login', { method: 'POST' }).catch((value) => value as ApiError);
+
+    expect(error.message).toBe('Invalid email or password.');
+    expect(unauthorizedHandler).not.toHaveBeenCalled();
+  });
+
+  it('shows a session-expired message and fires the unauthorized handler for a 401 on an authenticated request', async () => {
+    const unauthorizedHandler = vi.fn();
+    setAccessToken('a-valid-looking-token');
+    setUnauthorizedHandler(unauthorizedHandler);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 'unauthorized', message: 'Invalid or expired token.', details: {}, request_id: 'req-expired' }), { status: 401 })));
+
+    const error: ApiError = await request<never>('/api/v1/books').catch((value) => value as ApiError);
+
+    expect(error.message).toBe('Your session has expired. Please log in again.');
+    expect(unauthorizedHandler).toHaveBeenCalledOnce();
   });
 });

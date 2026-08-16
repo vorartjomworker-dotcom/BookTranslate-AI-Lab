@@ -123,6 +123,10 @@ it('shows a login error and keeps the user on the login screen', async () => {
   fireEvent.click(screen.getByRole('button', { name: /sign in/i }));
 
   await screen.findByText('Sign-in failed');
+  // A first, never-authenticated login failure must read as an invalid-credentials
+  // rejection, never as an expired session (those are different auth states).
+  expect(screen.getByText('Invalid email or password.')).toBeTruthy();
+  expect(screen.queryByText(/session has expired/i)).toBeNull();
   expect(screen.queryByText('Distributed Systems')).toBeNull();
 });
 
