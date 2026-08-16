@@ -30,7 +30,7 @@ const DEFAULT_TIMEOUT_MS = 15000;
 
 // In-memory only: the access token is never written to localStorage/sessionStorage so it
 // cannot be exfiltrated via XSS reading persistent storage. It is cleared on page reload
-// by design; the HttpOnly refresh cookie is used to silently re-establish a session.
+// and explicit logout by design; there is no refresh-token cookie or silent refresh flow.
 let accessToken: string | null = null;
 let unauthorizedHandler: (() => void) | null = null;
 
