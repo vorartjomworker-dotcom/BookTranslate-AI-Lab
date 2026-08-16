@@ -3,8 +3,9 @@ from __future__ import annotations
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import User
+from app.core.roles import ROLE_ADMIN
 from app.core.security import normalize_email
+from app.models import User
 
 
 class UserRepository:
@@ -25,6 +26,27 @@ class UserRepository:
     async def count(self) -> int:
         result = await self.session.execute(select(func.count(User.id)))
         return int(result.scalar_one() or 0)
+
+    async def count_active_admins(self) -> int:
+        result = await self.session.execute(
+            select(func.count(User.id)).where(User.role == ROLE_ADMIN, User.is_active.is_(True))
+        )
+        return int(result.scalar_one() or 0)
+
+    async def lock_active_admins(self) -> list[User]:
+        """Lock active admin rows before an operation that could remove admin access.
+
+        PostgreSQL READ COMMITTED semantics re-evaluate the qualifying rows after
+        waiting for a concurrent lock holder, which prevents two simultaneous
+        demotions/deactivations from both observing the same stale admin count.
+        """
+        result = await self.session.execute(
+            select(User)
+            .where(User.role == ROLE_ADMIN, User.is_active.is_(True))
+            .order_by(User.id)
+            .with_for_update()
+        )
+        return list(result.scalars().all())
 
     async def create(self, *, email: str, password_hash: str, role: str) -> User:
         normalized_email = normalize_email(email)
