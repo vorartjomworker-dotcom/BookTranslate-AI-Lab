@@ -47,11 +47,12 @@ class BookService:
             await self.session.rollback()
             raise ConflictError("Book update violates a database constraint.") from exc
 
-    async def delete_book(self, book_id: int) -> None:
+    async def delete_book(self, book_id: int, *, commit: bool = True) -> None:
         book = await self.get_book(book_id)
         try:
             await self.repository.delete(book)
-            await self.session.commit()
+            if commit:
+                await self.session.commit()
         except IntegrityError as exc:
             await self.session.rollback()
             raise ConflictError("Book deletion violates a database constraint.") from exc
