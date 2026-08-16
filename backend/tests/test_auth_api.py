@@ -14,11 +14,15 @@ from app.models import User
 
 
 @pytest.fixture
-def auth_client(async_session_factory):
+def auth_client(async_session_factory, monkeypatch):
     async def override_get_db() -> AsyncGenerator:
         async with async_session_factory() as session:
             yield session
 
+    async def allow_login_attempt(**_kwargs) -> None:
+        return None
+
+    monkeypatch.setattr("app.api.v1.auth.enforce_login_rate_limit", allow_login_attempt)
     app.dependency_overrides[get_db] = override_get_db
     with TestClient(app) as client:
         yield client
