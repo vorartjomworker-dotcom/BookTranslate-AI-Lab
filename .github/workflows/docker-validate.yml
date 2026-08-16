@@ -41,6 +41,22 @@ jobs:
         JWT_SECRET='test-only-secret-for-compose-at-least-32-characters-long' docker compose config >/dev/null
         echo "✓ Compose rejects missing JWT_SECRET and accepts an explicit secret"
 
+    - name: Verify backend healthcheck targets readiness endpoint
+      shell: bash
+      run: |
+        set -euo pipefail
+        python - <<'PY'
+        import yaml
+
+        with open("docker-compose.yml") as f:
+            compose = yaml.safe_load(f)
+
+        healthcheck = compose["services"]["backend"]["healthcheck"]
+        test_cmd = " ".join(healthcheck["test"])
+        assert "/health/ready" in test_cmd, f"backend healthcheck must target /health/ready, got: {test_cmd}"
+        print("✓ backend healthcheck targets /health/ready")
+        PY
+
     - name: Check Dockerfile syntax
       run: |
         docker run --rm -i hadolint/hadolint < backend/Dockerfile || true

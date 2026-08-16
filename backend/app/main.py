@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, Awaitable, Callable
 from uuid import uuid4
 
 from fastapi import FastAPI, Request
@@ -163,18 +164,31 @@ async def root() -> dict[str, str]:
     }
 
 
+_HEALTH_CHECK_TIMEOUT_SECONDS = 2.0
+
+
+async def _safe_dependency_check(check: Callable[[], Awaitable[bool]]) -> bool:
+    """Run a dependency check with a bounded timeout, never raising or hanging."""
+    try:
+        return await asyncio.wait_for(check(), timeout=_HEALTH_CHECK_TIMEOUT_SECONDS)
+    except Exception:
+        return False
+
+
+async def _check_dependencies() -> tuple[bool, bool]:
+    return await asyncio.gather(
+        _safe_dependency_check(check_database),
+        _safe_dependency_check(check_redis),
+    )
+
+
 @app.get("/health")
 async def health() -> dict[str, object]:
-    try:
-        db_ok = await check_database()
-    except Exception:
-        db_ok = False
+    """Legacy alias kept for backward compatibility; mirrors liveness-style 200 with a degraded status field.
 
-    try:
-        redis_ok = await check_redis()
-    except Exception:
-        redis_ok = False
-
+    Prefer `/health/live` for orchestration liveness probes and `/health/ready` for readiness probes.
+    """
+    db_ok, redis_ok = await _check_dependencies()
     overall_status = "ok" if (db_ok and redis_ok) else "degraded"
 
     return {
@@ -182,3 +196,22 @@ async def health() -> dict[str, object]:
         "database": db_ok,
         "redis": redis_ok,
     }
+
+
+@app.get("/health/live")
+async def health_live() -> dict[str, object]:
+    """Liveness probe: succeeds whenever the FastAPI process can handle a request, independent of dependencies."""
+    return {"status": "ok"}
+
+
+@app.get("/health/ready")
+async def health_ready() -> JSONResponse:
+    """Readiness probe: 200 only when PostgreSQL and Redis are both reachable, otherwise 503."""
+    db_ok, redis_ok = await _check_dependencies()
+    ready = db_ok and redis_ok
+    payload = {
+        "status": "ok" if ready else "degraded",
+        "database": db_ok,
+        "redis": redis_ok,
+    }
+    return JSONResponse(status_code=200 if ready else 503, content=payload)

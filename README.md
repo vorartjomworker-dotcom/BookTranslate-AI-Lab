@@ -109,8 +109,11 @@ This starts:
 
 ### 3. Verify backend health
 
+`/health/live` reports process liveness (always `200` once FastAPI is up). `/health/ready` reports readiness (`200` only when PostgreSQL and Redis are both reachable, `503` otherwise) and is what Docker Compose's backend healthcheck uses. `/health` is kept as a legacy alias that always returns `200` with a `status` field of `ok`/`degraded`, for backward compatibility only.
+
 ```bash
-curl http://localhost:8000/health
+curl http://localhost:8000/health/live
+curl http://localhost:8000/health/ready
 ```
 
 ## Development
@@ -188,7 +191,7 @@ The API and workspace UI require an authenticated user. Passwords are hashed wit
 | `editor` | ✅ | ✅ | ✅ | ❌ | ❌ |
 | `admin` | ✅ | ✅ | ✅ | ✅ | ✅ |
 
-`/health` and `/` remain unauthenticated so container/orchestrator health checks keep working. `POST /api/v1/auth/login` is the only public API authentication endpoint. `/api/v1/auth/me` requires a valid access token.
+`/health`, `/health/live`, `/health/ready`, and `/` remain unauthenticated so container/orchestrator health checks keep working. `POST /api/v1/auth/login` is the only public API authentication endpoint. `/api/v1/auth/me` requires a valid access token.
 
 ### Bootstrap flow
 Run `python -m app.auth.bootstrap_admin` with `ADMIN_EMAIL` and `ADMIN_PASSWORD` environment variables, or provide them interactively. Bootstrap refuses to run when any user already exists and never exposes a public HTTP endpoint.
@@ -285,8 +288,9 @@ cp .env.example .env
 # Start all services
 docker compose up --build
 
-# Verify health
-curl http://localhost:8000/health
+# Verify liveness and readiness
+curl http://localhost:8000/health/live
+curl http://localhost:8000/health/ready
 ```
 
 ## Architecture Notes
@@ -304,6 +308,13 @@ curl http://localhost:8000/health
 - Pydantic v2 for configuration validation
 - Separate worker process for long-running jobs
 - Database migrations versioned with Alembic for team collaboration
+
+### Liveness and readiness health checks
+- `GET /health/live` — liveness. Returns `200` whenever the FastAPI process itself can handle a request; it never depends on PostgreSQL or Redis.
+- `GET /health/ready` — readiness. Checks PostgreSQL (`SELECT 1`) and Redis (`PING`) with a bounded per-check timeout. Returns `200` only when both are reachable; returns `503` if either (or both) is down. Dependency exceptions are caught and turned into a `503` response, never a `500`/traceback.
+- `GET /health` — legacy alias kept for backward compatibility. Always returns `200` with a `status` of `ok`/`degraded` plus `database`/`redis` booleans. New integrations should use `/health/live` and `/health/ready` instead.
+- All three endpoints return only booleans/status strings — no DSNs, Redis URLs, credentials, or tracebacks.
+- Docker Compose's `backend` service healthcheck calls `/health/ready`, so `depends_on: condition: service_healthy` (used by `frontend` and `translator-worker`) now reflects real readiness to serve business requests, not just process liveness. Retries/interval on the healthcheck provide retry behavior; the endpoint itself does not retry internally.
 
 ## Roadmap
 
