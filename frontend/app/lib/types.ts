@@ -83,7 +83,7 @@ export type QualityReport = {
 
 export type QualitySummary = { book_id: number; total_segments: number; translated_segments: number; checked_segments: number; passed: number; needs_review: number; failed: number; stale_reports: number; average_score: number | null };
 
-export type BenchmarkRun = { run_id: string; provider: string; model: string; status: string; dry_run: boolean; dataset_name: string; dataset_version: string; metrics: Record<string, number | string>; category_metrics: Record<string, Record<string, number | string>>; created_at: string | null };
+export type BenchmarkRun = { run_id: string; provider: string; model: string; status: string; dataset_name: string; dataset_version: string; metrics: Record<string, number | string>; category_metrics: Record<string, Record<string, number | string>>; created_at: string | null };
 export type BenchmarkCase = { id: number; case_id: string; category: string; status: string; attempt_count: number; latency_ms: number; total_tokens: number; estimated_cost_usd: number; qa_score: number; qa_passed: boolean; error_code: string | null; error_message: string | null };
 
 export type HealthResponse = { status: 'ok' | 'degraded'; database: boolean; redis: boolean };
