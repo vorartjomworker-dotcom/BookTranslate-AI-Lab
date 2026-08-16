@@ -28,18 +28,30 @@ jobs:
         pip install pyyaml
         python -c "import yaml; yaml.safe_load(open('docker-compose.yml')); print('✓ docker-compose.yml is valid YAML')"
 
-    - name: Verify JWT secret is required by Compose
+    - name: Verify required Compose secrets
       shell: bash
       run: |
         set -euo pipefail
+
         unset JWT_SECRET
-        if docker compose config >/tmp/compose-without-secret.out 2>/tmp/compose-without-secret.err; then
+        export POSTGRES_PASSWORD='test-only-postgres-password-for-compose'
+        if docker compose config >/tmp/compose-without-jwt.out 2>/tmp/compose-without-jwt.err; then
           echo "docker compose config unexpectedly succeeded without JWT_SECRET"
           exit 1
         fi
-        grep -q "JWT_SECRET is required" /tmp/compose-without-secret.err
-        JWT_SECRET='test-only-secret-for-compose-at-least-32-characters-long' docker compose config >/dev/null
-        echo "✓ Compose rejects missing JWT_SECRET and accepts an explicit secret"
+        grep -q "JWT_SECRET is required" /tmp/compose-without-jwt.err
+
+        export JWT_SECRET='test-only-secret-for-compose-at-least-32-characters-long'
+        unset POSTGRES_PASSWORD
+        if docker compose config >/tmp/compose-without-db-password.out 2>/tmp/compose-without-db-password.err; then
+          echo "docker compose config unexpectedly succeeded without POSTGRES_PASSWORD"
+          exit 1
+        fi
+        grep -q "POSTGRES_PASSWORD is required" /tmp/compose-without-db-password.err
+
+        export POSTGRES_PASSWORD='test-only-postgres-password-for-compose'
+        docker compose config >/dev/null
+        echo "✓ Compose rejects missing JWT_SECRET and POSTGRES_PASSWORD and accepts explicit secrets"
 
     - name: Verify backend healthcheck targets readiness endpoint
       shell: bash
@@ -90,6 +102,7 @@ jobs:
       shell: bash
       env:
         JWT_SECRET: test-only-secret-for-clean-compose-smoke-at-least-32-characters-long
+        POSTGRES_PASSWORD: test-only-postgres-password-for-clean-compose-smoke
       run: |
         set -euo pipefail
 
