@@ -17,7 +17,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if ! docker compose ps --status running postgres --format '{{.Service}}' 2>/dev/null | grep -Fxq postgres; then
+if ! docker compose exec -T postgres true >/dev/null 2>&1; then
   echo "PostgreSQL Compose service is not running." >&2
   exit 1
 fi
