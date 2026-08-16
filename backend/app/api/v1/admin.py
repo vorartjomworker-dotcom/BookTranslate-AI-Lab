@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ConflictError, NotFoundError
-from app.core.roles import ADMIN_ROLES
+from app.core.roles import ADMIN_ROLES, ROLE_ADMIN
 from app.core.security import hash_password, normalize_email
 from app.dependencies.auth import require_roles
 from app.dependencies.db import get_db
@@ -33,10 +33,29 @@ async def create_user(payload: UserCreate, db: AsyncSession = Depends(get_db), _
 
 @router.patch("/{user_id}", response_model=UserRead)
 async def update_user(user_id: int, payload: UserUpdate, db: AsyncSession = Depends(get_db), _: User = Depends(require_roles(*ADMIN_ROLES))) -> User:
-    user = await UserRepository(db).get_by_id(user_id)
+    repository = UserRepository(db)
+    user = await repository.get_by_id(user_id)
     if user is None:
         raise NotFoundError("User not found.")
+
     changes = payload.model_dump(exclude_unset=True)
+    removes_active_admin = (
+        user.role == ROLE_ADMIN
+        and user.is_active
+        and (
+            ("role" in changes and changes["role"] != ROLE_ADMIN)
+            or ("is_active" in changes and changes["is_active"] is False)
+        )
+    )
+    if removes_active_admin:
+        active_admins = await repository.lock_active_admins()
+        active_admin_ids = {admin.id for admin in active_admins}
+        if user.id in active_admin_ids and len(active_admins) == 1:
+            raise ConflictError(
+                "Cannot deactivate or demote the last active administrator.",
+                details={"user_id": user.id},
+            )
+
     for field, value in changes.items():
         setattr(user, field, value)
     await db.commit()
