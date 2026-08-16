@@ -42,6 +42,18 @@ def _assert_no_db_details_leaked(body: dict) -> None:
         assert token not in lowered, f"response leaked DB internals: {token!r} in {body!r}"
 
 
+def _direct_route_context() -> tuple[SimpleNamespace, SimpleNamespace]:
+    """Build direct-call request/actor stubs for route-level integration tests.
+
+    The actor intentionally has no persisted id because these tests exercise the
+    duplicate constraint/session recovery path rather than authentication. This
+    keeps the new audit-event FK valid while preserving the original test scope.
+    """
+    request = SimpleNamespace(state=SimpleNamespace(request_id="direct-route-test"))
+    actor = SimpleNamespace(id=None)
+    return request, actor
+
+
 # ---------------------------------------------------------------------------
 # Layer 1: sequential duplicate via the API (hits the pre-check, no DB needed)
 # ---------------------------------------------------------------------------
@@ -151,10 +163,10 @@ async def _assert_real_db_duplicate_conflict_and_session_recovers(
 
         async with factory() as session:
             payload = UserCreate(email=attempted_email, password="new-password-123", role="viewer")
-            admin_stub = User(id=1, email="admin-stub@example.com", role="admin", is_active=True)
+            request_stub, actor_stub = _direct_route_context()
 
             with pytest.raises(ConflictError) as exc_info:
-                await create_user(payload, db=session, _=admin_stub)
+                await create_user(payload, request=request_stub, db=session, actor=actor_stub)
 
             assert exc_info.value.code == "conflict"
             assert exc_info.value.http_status == 409
@@ -244,9 +256,9 @@ async def test_unrelated_integrity_error_is_not_masked_as_duplicate_email(monkey
     )
 
     payload = UserCreate(email="unrelated-conflict@example.com", password="some-password-123", role="viewer")
-    admin_stub = User(id=1, email="admin-stub@example.com", role="admin", is_active=True)
+    request_stub, actor_stub = _direct_route_context()
 
     with pytest.raises(IntegrityError):
-        await create_user(payload, db=db, _=admin_stub)
+        await create_user(payload, request=request_stub, db=db, actor=actor_stub)
 
     db.rollback.assert_awaited_once()
