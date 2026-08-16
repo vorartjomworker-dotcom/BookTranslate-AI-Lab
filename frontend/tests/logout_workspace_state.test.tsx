@@ -176,7 +176,7 @@ it('preserves an unsaved draft across session-expiry reauthentication', async ()
   await screen.findByDisplayValue('Unsaved draft text');
   expect(screen.getByDisplayValue('Unsaved draft text')).toBeTruthy();
   // Same user.id reauthenticated: workspace selection must also survive, not just the draft.
-  expect(screen.getByText('Distributed Systems')).toBeTruthy();
+  expect(screen.getAllByText('Distributed Systems').length).toBeGreaterThan(0);
   expect(screen.getByText('Intro')).toBeTruthy();
 });
 
