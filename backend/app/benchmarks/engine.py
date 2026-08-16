@@ -5,7 +5,7 @@ import hashlib
 import json
 import logging
 import random
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select
@@ -20,6 +20,7 @@ from app.benchmarks.pricing import estimate_cost_usd, get_pricing_snapshot
 from app.benchmarks.types import BenchmarkExecutionContract, BenchmarkCase, BenchmarkCaseResultModel
 from app.core.config import settings
 from app.core.exceptions import ConflictError, ValidationError
+from app.core.time import utc_now_naive
 from app.models import BenchmarkCaseResult, BenchmarkRun
 from app.quality.deterministic import DeterministicQualityEvaluator
 
@@ -27,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return utc_now_naive()
 
 
 def _safe_benchmark_error_message(exc: Exception) -> str:
@@ -79,7 +80,7 @@ class FakeBenchmarkProvider:
 class BenchmarkExecutionEngine:
     def __init__(self, session: AsyncSession, *, engine_id: str | None = None) -> None:
         self.session = session
-        self.engine_id = engine_id or hashlib.sha256(f"{datetime.utcnow().isoformat()}-{random.random()}".encode("utf-8")).hexdigest()[:12]
+        self.engine_id = engine_id or hashlib.sha256(f"{_utcnow().isoformat()}-{random.random()}".encode("utf-8")).hexdigest()[:12]
         self.deterministic_evaluator = DeterministicQualityEvaluator()
 
     def _normalise_provider_model(self, provider: str, model: str | None) -> tuple[str, str]:
@@ -342,7 +343,7 @@ async def build_run_from_request(session: AsyncSession, *, request: BenchmarkExe
         raise ValidationError("Dataset checksum mismatch.", details={"requested": request.dataset_checksum, "actual": dataset.checksum})
 
     run = BenchmarkRun(
-        run_id=f"bench-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{random.randint(1000, 9999)}",
+        run_id=f"bench-{_utcnow().strftime('%Y%m%d%H%M%S')}-{random.randint(1000, 9999)}",
         dataset_name=request.dataset_name,
         dataset_version=request.dataset_version,
         dataset_checksum=request.dataset_checksum,

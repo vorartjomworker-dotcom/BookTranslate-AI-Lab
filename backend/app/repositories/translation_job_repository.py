@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime
-
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.time import utc_now_naive
 from app.models.translation_job import TranslationJob
 
 
@@ -46,11 +45,11 @@ class TranslationJobRepository:
             if value is not None:
                 setattr(job, field_name, value)
         if status == "running":
-            job.started_at = job.started_at or datetime.utcnow()
+            job.started_at = job.started_at or utc_now_naive()
         if status == "completed":
-            job.completed_at = job.completed_at or datetime.utcnow()
+            job.completed_at = job.completed_at or utc_now_naive()
         if status == "failed":
-            job.failed_at = job.failed_at or datetime.utcnow()
+            job.failed_at = job.failed_at or utc_now_naive()
         await self.session.flush()
         return job
 

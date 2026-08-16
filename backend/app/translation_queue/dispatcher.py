@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
 from typing import Any
 
 from redis.asyncio import Redis
@@ -9,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.config import settings
+from app.core.time import utc_now_naive
 from app.db import async_session_factory
 from app.models import TranslationJob
 from app.translation_queue.redis_stream import RedisStreamQueue
@@ -83,7 +83,7 @@ class TranslationJobDispatcher:
 
                     job.stream_message_id = message_id
                     job.status = "queued"
-                    job.queued_at = job.queued_at or datetime.utcnow()
+                    job.queued_at = job.queued_at or utc_now_naive()
                     await session.commit()
                     published += 1
             finally:

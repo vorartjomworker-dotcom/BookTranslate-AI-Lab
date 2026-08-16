@@ -7,7 +7,6 @@ import inspect
 import logging
 import signal
 import sys
-from datetime import datetime
 from typing import Any
 
 from redis.asyncio import Redis
@@ -16,6 +15,7 @@ from app.ai.exceptions import TranslationError
 from app.ai.translation_service import TranslationService
 from app.ai.types import TranslationRequest
 from app.core.config import settings
+from app.core.time import utc_now_naive
 from app.db import async_session_factory
 from app.models import Segment, TranslationJob
 from app.quality.service import QualityAssuranceService
@@ -111,20 +111,20 @@ class TranslatorWorker:
 
                 if status == "queued":
                     if getattr(job, "queued_at", None) is None:
-                        job.queued_at = datetime.utcnow()
+                        job.queued_at = utc_now_naive()
                 elif status == "running":
                     if getattr(job, "started_at", None) is None:
-                        job.started_at = datetime.utcnow()
+                        job.started_at = utc_now_naive()
                     if getattr(job, "queued_at", None) is None:
-                        job.queued_at = datetime.utcnow()
+                        job.queued_at = utc_now_naive()
                 elif status == "completed":
                     if getattr(job, "completed_at", None) is None:
-                        job.completed_at = datetime.utcnow()
+                        job.completed_at = utc_now_naive()
                     job.error_code = None
                     job.error_message = None
                 elif status == "failed":
                     if getattr(job, "failed_at", None) is None:
-                        job.failed_at = datetime.utcnow()
+                        job.failed_at = utc_now_naive()
                     if getattr(job, "error_code", None) is None:
                         job.error_code = "worker_failed"
 
@@ -207,7 +207,7 @@ class TranslatorWorker:
                             job.status = "failed"
                             job.error_message = str(exc)
                             job.error_code = getattr(exc, "code", exc.__class__.__name__)
-                            job.failed_at = datetime.utcnow()
+                            job.failed_at = utc_now_naive()
                             await session.commit()
                     except asyncio.CancelledError:
                         raise
@@ -259,7 +259,7 @@ class TranslatorWorker:
                         job.status = "completed"
                         job.error_code = None
                         job.error_message = None
-                        job.completed_at = datetime.utcnow()
+                        job.completed_at = utc_now_naive()
 
                     await session.commit()
                 except asyncio.CancelledError:
