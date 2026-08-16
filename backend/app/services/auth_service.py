@@ -39,10 +39,11 @@ class AuthService:
     async def get_user_from_access_token(self, access_token: str) -> User:
         try:
             payload = decode_access_token(access_token)
-        except TokenError as exc:
+            user_id = int(payload["sub"])
+        except (TokenError, ValueError, TypeError, KeyError) as exc:
             raise AuthenticationError("Invalid or expired token.") from exc
 
-        user = await self.repository.get_by_id(int(payload["sub"]))
+        user = await self.repository.get_by_id(user_id)
         if user is None:
             raise AuthenticationError("Invalid or expired token.")
         if not user.is_active:
