@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { setAccessToken, setUnauthorizedHandler } from './lib/api';
-import { login as apiLogin, logout as apiLogout, refresh as apiRefresh } from './lib/auth';
+import { login as apiLogin } from './lib/auth';
 import type { AuthUser } from './lib/auth-types';
 
 type AuthContextValue = {
@@ -30,17 +30,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (hasSessionRef.current) setSessionExpired(true);
       setAccessToken(null);
     });
-    // These calls establish the initial session from the refresh cookie on page load.
-    void (async () => {
-      try {
-        const response = await apiRefresh();
-        hasSessionRef.current = true;
-        setUser(response.user);
-        setStatus('authenticated');
-      } catch {
-        setStatus('unauthenticated');
-      }
-    })();
+    setStatus('unauthenticated');
     return () => setUnauthorizedHandler(null);
   }, []);
 
@@ -54,12 +44,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = useCallback(async () => {
     hasSessionRef.current = false;
-    try {
-      await apiLogout();
-    } finally {
-      setUser(null);
-      setStatus('unauthenticated');
-    }
+    setAccessToken(null);
+    setUser(null);
+    setStatus('unauthenticated');
   }, []);
 
   const dismissSessionExpired = useCallback(() => setSessionExpired(false), []);

@@ -13,16 +13,20 @@ class UserRepository:
     async def get_by_id(self, user_id: int) -> User | None:
         return await self.session.get(User, user_id)
 
-    async def get_by_email(self, email: str) -> User | None:
-        result = await self.session.execute(select(User).where(User.email == email))
+    async def get_by_normalized_email(self, email: str) -> User | None:
+        result = await self.session.execute(select(User).where(User.normalized_email == email))
         return result.scalar_one_or_none()
+
+    async def list(self) -> list[User]:
+        result = await self.session.execute(select(User).order_by(User.id))
+        return list(result.scalars().all())
 
     async def count(self) -> int:
         result = await self.session.execute(select(func.count(User.id)))
         return int(result.scalar_one() or 0)
 
     async def create(self, *, email: str, password_hash: str, role: str) -> User:
-        user = User(email=email, password_hash=password_hash, role=role, is_active=True)
+        user = User(email=email, normalized_email=email, password_hash=password_hash, role=role, is_active=True)
         self.session.add(user)
         await self.session.flush()
         await self.session.refresh(user)

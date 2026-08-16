@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 from app.core.config import settings
-from app.core.exceptions import AuthenticationError, ConflictError
-from app.core.roles import ROLE_ADMIN
+from app.core.exceptions import AuthenticationError
 from app.core.security import (
     create_access_token,
-    create_refresh_token,
-    decode_token,
+    decode_access_token,
     hash_password,
     normalize_email,
     verify_password,
@@ -21,28 +19,9 @@ class AuthService:
         self.session = session
         self.repository = UserRepository(session)
 
-    async def bootstrap_admin(self, *, email: str, password: str, bootstrap_token: str | None) -> User:
-        if not settings.auth_bootstrap_token:
-            raise AuthenticationError("Bootstrap is disabled. Set AUTH_BOOTSTRAP_TOKEN to enable it.")
-        if bootstrap_token != settings.auth_bootstrap_token:
-            raise AuthenticationError("Invalid bootstrap token.")
-
-        existing_count = await self.repository.count()
-        if existing_count > 0:
-            raise ConflictError("An administrator already exists. Bootstrap is only available on an empty user table.")
-
-        normalized_email = normalize_email(email)
-        user = await self.repository.create(
-            email=normalized_email,
-            password_hash=hash_password(password),
-            role=ROLE_ADMIN,
-        )
-        await self.session.commit()
-        return user
-
     async def authenticate(self, *, email: str, password: str) -> User:
         normalized_email = normalize_email(email)
-        user = await self.repository.get_by_email(normalized_email)
+        user = await self.repository.get_by_normalized_email(normalized_email)
         # Always run a hash comparison, even for unknown emails, so response timing does
         # not reveal whether the account exists.
         if user is None:
@@ -54,26 +33,12 @@ class AuthService:
             raise AuthenticationError("This account is inactive.")
         return user
 
-    async def issue_tokens(self, user: User) -> tuple[str, str, int]:
-        access_token = create_access_token(user.id)
-        refresh_token = create_refresh_token(user.id)
-        return access_token, refresh_token, settings.auth_access_token_expires_minutes * 60
-
-    async def refresh_access_token(self, refresh_token: str) -> tuple[str, str, int]:
-        try:
-            payload = decode_token(refresh_token, expected_type="refresh")
-        except TokenError as exc:
-            raise AuthenticationError("Invalid or expired refresh token.") from exc
-
-        user = await self.repository.get_by_id(int(payload["sub"]))
-        if user is None or not user.is_active:
-            raise AuthenticationError("Invalid or expired refresh token.")
-
-        return await self.issue_tokens(user)
+    async def issue_tokens(self, user: User) -> tuple[str, int]:
+        return create_access_token(user.id), settings.jwt_expire_minutes * 60
 
     async def get_user_from_access_token(self, access_token: str) -> User:
         try:
-            payload = decode_token(access_token, expected_type="access")
+            payload = decode_access_token(access_token)
         except TokenError as exc:
             raise AuthenticationError("Invalid or expired token.") from exc
 

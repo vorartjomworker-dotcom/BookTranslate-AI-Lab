@@ -56,36 +56,6 @@ def test_password_hash_is_salted_and_unique_per_call() -> None:
     assert hash_one != hash_two
 
 
-# --- Bootstrap ---------------------------------------------------------------------------
-
-
-def test_bootstrap_admin_requires_configured_token(auth_client, monkeypatch) -> None:
-    monkeypatch.setattr(settings, "auth_bootstrap_token", "")
-    response = auth_client.post("/api/v1/auth/bootstrap-admin", json={"email": "admin@example.com", "password": "supersecret1"})
-    assert response.status_code == 401
-
-
-def test_bootstrap_admin_succeeds_with_valid_token_once(auth_client, monkeypatch) -> None:
-    monkeypatch.setattr(settings, "auth_bootstrap_token", "bootstrap-secret")
-    response = auth_client.post(
-        "/api/v1/auth/bootstrap-admin",
-        json={"email": "admin@example.com", "password": "supersecret1"},
-        headers={"X-Bootstrap-Token": "bootstrap-secret"},
-    )
-    assert response.status_code == 201, response.text
-    body = response.json()
-    assert body["user"]["role"] == "admin"
-    assert "password" not in body
-    assert "password_hash" not in body["user"]
-
-    second = auth_client.post(
-        "/api/v1/auth/bootstrap-admin",
-        json={"email": "another-admin@example.com", "password": "supersecret1"},
-        headers={"X-Bootstrap-Token": "bootstrap-secret"},
-    )
-    assert second.status_code == 409
-
-
 # --- Login ---------------------------------------------------------------------------
 
 
@@ -100,7 +70,6 @@ def test_login_success(auth_client, async_session_factory) -> None:
     assert body["token_type"] == "bearer"
     assert "access_token" in body and body["access_token"]
     assert "password" not in body and "password_hash" not in body["user"]
-    assert "refresh_token" in response.cookies
 
 
 def test_login_wrong_password_returns_401(auth_client, async_session_factory) -> None:
@@ -151,7 +120,7 @@ def test_me_with_expired_token_returns_401(auth_client, async_session_factory) -
 
     user = asyncio.run(_create_user(async_session_factory, email="expired@example.com", password="some-password-1", role="viewer"))
     now = datetime.now(timezone.utc)
-    expired_payload = {"sub": str(user.id), "type": "access", "iat": int((now - timedelta(hours=1)).timestamp()), "exp": int((now - timedelta(minutes=1)).timestamp())}
+    expired_payload = {"sub": str(user.id), "token_type": "access", "iat": int((now - timedelta(hours=1)).timestamp()), "exp": int((now - timedelta(minutes=1)).timestamp())}
     expired_token = jwt.encode(expired_payload, settings.auth_secret_key, algorithm="HS256")
 
     response = auth_client.get("/api/v1/auth/me", headers=_auth_header(expired_token))
@@ -162,7 +131,7 @@ def test_me_rejects_token_with_wrong_algorithm(auth_client, async_session_factor
     import asyncio
 
     user = asyncio.run(_create_user(async_session_factory, email="algcheck@example.com", password="some-password-1", role="viewer"))
-    forged = jwt.encode({"sub": str(user.id), "type": "access"}, "guessed-secret", algorithm="HS256")
+    forged = jwt.encode({"sub": str(user.id), "token_type": "access"}, "guessed-secret", algorithm="HS256")
     response = auth_client.get("/api/v1/auth/me", headers=_auth_header(forged))
     assert response.status_code == 401
 

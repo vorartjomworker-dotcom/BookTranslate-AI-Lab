@@ -15,13 +15,6 @@ class UserRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class BootstrapAdminRequest(BaseModel):
-    email: EmailStr
-    password: str = Field(..., min_length=8, max_length=200)
-
-    model_config = ConfigDict(extra="forbid")
-
-
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=1, max_length=200)
@@ -34,3 +27,18 @@ class AccessTokenResponse(BaseModel):
     token_type: str = "bearer"
     expires_in: int
     user: UserRead
+
+
+class UserCreate(BaseModel):
+    email: EmailStr
+    password: str = Field(..., min_length=8, max_length=200)
+    role: str = Field(default="viewer", pattern="^(admin|editor|viewer)$")
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class UserUpdate(BaseModel):
+    role: str | None = Field(default=None, pattern="^(admin|editor|viewer)$")
+    is_active: bool | None = None
+
+    model_config = ConfigDict(extra="forbid")

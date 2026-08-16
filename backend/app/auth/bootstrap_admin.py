@@ -1,0 +1,29 @@
+from __future__ import annotations
+
+import asyncio
+import getpass
+import os
+from email_validator import validate_email
+
+from app.core.config import settings
+from app.core.roles import ROLE_ADMIN
+from app.core.security import hash_password, normalize_email
+from app.db import async_session_factory
+from app.repositories.user_repository import UserRepository
+
+
+async def bootstrap() -> None:
+    email = os.getenv("ADMIN_EMAIL") or input("Admin email: ")
+    password = os.getenv("ADMIN_PASSWORD") or getpass.getpass("Admin password: ")
+    normalized_email = normalize_email(validate_email(email).email)
+    async with async_session_factory() as session:
+        repository = UserRepository(session)
+        if await repository.count() > 0:
+            raise SystemExit("Admin bootstrap refused: the users table is not empty.")
+        await repository.create(email=normalized_email, password_hash=hash_password(password), role=ROLE_ADMIN)
+        await session.commit()
+    print(f"Created admin user {normalized_email}.")
+
+
+if __name__ == "__main__":
+    asyncio.run(bootstrap())

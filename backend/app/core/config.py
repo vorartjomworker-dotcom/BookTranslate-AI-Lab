@@ -71,12 +71,14 @@ class Settings(BaseSettings):
     benchmark_dataset_name: str = "technical_translation"
     benchmark_dataset_version: str = "2026.08.15"
 
-    auth_secret_key: str = "dev-only-insecure-secret-change-me"
-    auth_access_token_expires_minutes: int = 15
-    auth_refresh_token_expires_days: int = 7
-    auth_bootstrap_token: str = ""
-    auth_cookie_secure: bool = False
-    auth_cookie_samesite: str = "lax"
+    jwt_secret: str = ""
+    jwt_algorithm: str = "HS256"
+    jwt_expire_minutes: int = 15
+    cors_allowed_origins: list[str] = ["http://localhost:3000", "http://localhost:3001"]
+
+    @property
+    def auth_secret_key(self) -> str:
+        return self.jwt_secret
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
@@ -153,20 +155,12 @@ class Settings(BaseSettings):
             raise ValueError("quality deterministic and AI weights must sum to 1")
         return self
 
-    @field_validator("auth_access_token_expires_minutes", "auth_refresh_token_expires_days")
+    @field_validator("jwt_expire_minutes")
     @classmethod
     def validate_auth_durations(cls, value: int, info: ValidationInfo) -> int:
         if value <= 0:
             raise ValueError(f"{info.field_name} must be greater than 0")
         return value
-
-    @field_validator("auth_cookie_samesite")
-    @classmethod
-    def validate_cookie_samesite(cls, value: str) -> str:
-        normalized = value.strip().lower()
-        if normalized not in {"lax", "strict", "none"}:
-            raise ValueError("auth_cookie_samesite must be one of: lax, strict, none")
-        return normalized
 
     @property
     def upload_dir_path(self) -> Path:

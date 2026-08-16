@@ -29,3 +29,7 @@ def require_roles(*allowed_roles: str):
         return user
 
     return _dependency
+
+
+def require_role(role: str):
+    return require_roles(role)

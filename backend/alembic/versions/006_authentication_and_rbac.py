@@ -24,6 +24,7 @@ def upgrade() -> None:
         "users",
         sa.Column("id", sa.Integer(), nullable=False),
         sa.Column("email", sa.String(length=255), nullable=False),
+        sa.Column("normalized_email", sa.String(length=255), nullable=False),
         sa.Column("password_hash", sa.String(length=255), nullable=False),
         sa.Column("role", sa.String(length=20), nullable=False, server_default="viewer"),
         sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.text("true")),
@@ -33,8 +34,10 @@ def upgrade() -> None:
         sa.CheckConstraint("role IN ('admin', 'editor', 'viewer')", name="ck_users_role"),
     )
     op.create_index(op.f("ix_users_email"), "users", ["email"], unique=True)
+    op.create_index(op.f("ix_users_normalized_email"), "users", ["normalized_email"], unique=True)
 
 
 def downgrade() -> None:
     op.drop_index(op.f("ix_users_email"), table_name="users")
+    op.drop_index(op.f("ix_users_normalized_email"), table_name="users")
     op.drop_table("users")

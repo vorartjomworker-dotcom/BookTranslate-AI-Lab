@@ -10,7 +10,7 @@ from app.benchmarks.dataset import TECHNICAL_TRANSLATION_DATASET_CHECKSUM, TECHN
 from app.benchmarks.service import BenchmarkService
 from app.core.exceptions import ConflictError, ValidationError
 from app.core.pagination import MAX_PAGE_SIZE, build_paginated_response, normalize_pagination
-from app.core.roles import ADMIN_ROLES
+from app.core.roles import ADMIN_ROLES, EDITOR_ROLES
 from app.dependencies.auth import get_current_user, require_roles
 from app.dependencies.db import get_db
 from app.models import User
@@ -43,7 +43,9 @@ class BenchmarkRunCancelRequest(BaseModel):
 
 
 @router.post("/benchmark-runs", status_code=status.HTTP_202_ACCEPTED)
-async def create_benchmark_run(payload: BenchmarkRunCreateRequest, db: AsyncSession = Depends(get_db), _: User = Depends(require_roles(*ADMIN_ROLES))) -> dict[str, Any]:
+async def create_benchmark_run(payload: BenchmarkRunCreateRequest, db: AsyncSession = Depends(get_db), user: User = Depends(require_roles(*EDITOR_ROLES))) -> dict[str, Any]:
+    if user.role != "admin" and (not payload.dry_run or payload.confirm_live_provider):
+        raise ValidationError("Only administrators may run live provider benchmarks.")
     dataset = load_dataset()
     if payload.dataset_name != dataset.name:
         raise ValidationError("Unsupported dataset name.", details={"dataset_name": payload.dataset_name, "expected": dataset.name})
