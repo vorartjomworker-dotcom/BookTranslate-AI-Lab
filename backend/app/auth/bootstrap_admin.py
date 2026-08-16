@@ -18,8 +18,12 @@ async def bootstrap() -> None:
     normalized_email = normalize_email(validate_email(email).email)
     async with async_session_factory() as session:
         repository = UserRepository(session)
-        if await repository.count() > 0:
-            raise SystemExit("Admin bootstrap refused: the users table is not empty.")
+        if await repository.count_active_admins() > 0:
+            raise SystemExit("Admin bootstrap refused: an active administrator already exists.")
+        if await repository.get_by_normalized_email(normalized_email):
+            raise SystemExit(
+                "Admin bootstrap refused: that email already belongs to an existing user; use an unused email for recovery."
+            )
         await repository.create(email=normalized_email, password_hash=hash_password(password), role=ROLE_ADMIN)
         await session.commit()
     print(f"Created admin user {normalized_email}.")
