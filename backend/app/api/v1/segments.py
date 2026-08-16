@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.audit import AuditService
 from app.core.pagination import MAX_PAGE_SIZE, build_paginated_response, normalize_pagination
 from app.core.roles import ADMIN_ROLES, EDITOR_ROLES
 from app.dependencies.auth import get_current_user, require_roles
@@ -63,9 +65,23 @@ async def patch_segment_translation(segment_id: int, payload: SegmentTranslation
 
 
 @router.delete("/segments/{segment_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
-async def delete_segment(segment_id: int, db: AsyncSession = Depends(get_db), _: User = Depends(require_roles(*ADMIN_ROLES))) -> Response:
+async def delete_segment(
+    segment_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    actor: User = Depends(require_roles(*ADMIN_ROLES)),
+) -> Response:
     service = SegmentService(db)
-    await service.delete_segment(segment_id)
+    await service.delete_segment(segment_id, commit=False)
+    await AuditService(db).record(
+        action="segment.delete",
+        outcome="success",
+        actor_user_id=actor.id,
+        target_type="segment",
+        target_id=segment_id,
+        request_id=getattr(request.state, "request_id", None),
+    )
+    await db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
