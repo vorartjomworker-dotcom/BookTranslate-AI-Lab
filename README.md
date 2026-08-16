@@ -1,105 +1,65 @@
 # BookTranslate AI Lab
 
-A production-oriented AI translation lab for technical books, combining document ingestion, chapter segmentation, AI translation pipelines, QA evaluation, and background processing.
+BookTranslate AI Lab is a production-oriented advanced MVP for translating technical books. It combines document ingestion, deterministic segmentation, pluggable AI providers, durable background translation jobs, quality evaluation, benchmarking, a translation editor, and local authentication/RBAC.
 
-## Overview
+## Core workflow
 
-This project is designed to support a complete workflow:
+`DOCX/EPUB upload → validation/parsing → chapters/segments → translation jobs → AI provider → QA → benchmark/editor`
 
-- upload DOCX and EPUB documents
-- parse and segment chapter content
-- translate text through multiple AI providers
-- score output quality with QA checks
-- manage translation jobs in Redis/async workers
-- persist all metadata in PostgreSQL
+Implemented capabilities:
 
-## AI Translation Layer
-
-PR #5 adds a durable translation job orchestration layer on top of the provider abstraction from PR #4. The queue is intentionally lightweight: PostgreSQL owns the job state, while Redis Streams carries only the minimal work payload for async execution.
-
-### Supported providers
-- OpenAI via async client with optional `OPENAI_BASE_URL` override for OpenAI-compatible APIs
-- Anthropic via async Messages API
-- DeepL via HTTPX with free/pro endpoint selection
-
-### Core rules
-- One common `TranslationRequest` and `TranslationResult` contract
-- Shared prompt builder with injection-safe instructions
-- Provider selection is explicit and lazy
-- No automatic fallback across paid providers
-- Timeout and retry are handled centrally in `TranslationService`
-- PostgreSQL keeps the source-of-truth job status and denies duplicate active jobs per segment
-- Redis Streams provides a consumer-group queue with DLQ-friendly handling for retries and poison messages
-- API keys remain environment-only values and are never logged or exposed in errors
+- DOCX and EPUB ingestion with archive/file validation
+- deterministic chapter and segment persistence in PostgreSQL
+- OpenAI, Anthropic, and DeepL provider abstraction
+- PostgreSQL-backed translation job state with Redis Streams delivery
+- async translation worker with retry/idempotency/stale-response protection
+- deterministic and AI-assisted quality evaluation
+- benchmark execution engine
+- Next.js operational workspace and translation editor
+- local email/password authentication with `viewer`, `editor`, and `admin` roles
+- liveness/readiness endpoints and Docker Compose deployment validation
 
 ## Architecture
 
 ### Backend
+
+- Python 3.12
 - FastAPI
-- PostgreSQL + SQLAlchemy
-- Redis for job queue and cache
-- Async workers for processing translation jobs
+- SQLAlchemy 2 async ORM
+- PostgreSQL 17
+- Alembic migrations
+- Redis 7 / Redis Streams
+- Argon2id password hashing
+- HS256 short-lived JWT access tokens
 
 ### Frontend
-- Next.js
-- React
-- TypeScript
 
-### AI layer
-- OpenAI
-- Anthropic
-- DeepL
-- provider abstraction layer
+- Next.js 16.3.1
+- React 19.2.8
+- TypeScript 5.9
+- Vitest + Testing Library
 
-## Repository structure
+### Containers
 
-```text
-BookTranslate-AI-Lab/
-├── backend/
-│   ├── app/
-│   │   ├── ai/
-│   │   ├── api/
-│   │   ├── core/
-│   │   ├── models/
-│   │   ├── services/
-│   │   ├── workers/
-│   │   ├── __init__.py
-│   │   ├── db.py
-│   │   ├── main.py
-│   │   └── redis_client.py
-│   ├── Dockerfile
-│   ├── requirements.txt
-│   └── tests/
-├── frontend/
-│   ├── app/
-│   ├── Dockerfile
-│   ├── package.json
-│   ├── tsconfig.json
-│   └── next-env.d.ts
-├── .env.example
-├── docker-compose.yml
-├── .gitignore
-├── README.md
-└── LICENSE
-```
+The backend image includes the Alembic migration tree and runs as an unprivileged `booktranslate` user. The frontend uses a multi-stage production build, installs dependencies reproducibly with `npm ci`, builds with `next build`, and runs with `npm start` as the unprivileged Node user.
 
-## Quick start
+## Quick start with Docker Compose
 
-### 1. Configure environment
-
-Copy the example environment file:
+### 1. Configure the environment
 
 ```bash
 cp .env.example .env
 ```
 
-`.env.example` deliberately leaves `JWT_SECRET` empty. Generate a unique local development secret (Python standard library only) and set the resulting value in `.env` before starting Docker Compose:
+`JWT_SECRET` and `POSTGRES_PASSWORD` are intentionally empty in `.env.example`. Generate separate local values:
 
 ```bash
-python -c "import secrets; print(secrets.token_urlsafe(48))"
+python -c "import secrets; print('JWT_SECRET='+secrets.token_urlsafe(48)); print('POSTGRES_PASSWORD='+secrets.token_urlsafe(32))"
 ```
 
-Set the output as `JWT_SECRET=<generated-value>` in `.env`. Do not commit `.env` or use a shared or production secret. Update AI provider keys in `.env` as needed for your chosen providers.
+Copy both generated values into `.env`. Do not commit `.env`, reuse these values across environments, or use development secrets in production.
+
+AI provider keys are optional unless the corresponding live provider is used.
 
 ### 2. Start the stack
 
@@ -107,34 +67,55 @@ Set the output as `JWT_SECRET=<generated-value>` in `.env`. Do not commit `.env`
 docker compose up --build
 ```
 
-This starts:
-- frontend on http://localhost:3000
-- backend on http://localhost:8000
-- PostgreSQL on localhost:5432
-- Redis on localhost:6379
+Compose starts PostgreSQL first, then runs the one-shot `migrate` service with:
 
-### 3. Verify backend health
+```bash
+alembic upgrade head
+```
 
-`/health/live` reports process liveness (always `200` once FastAPI is up). `/health/ready` reports readiness (`200` only when PostgreSQL and Redis are both reachable, `503` otherwise) and is what Docker Compose's backend healthcheck uses. `/health` is kept as a legacy alias that always returns `200` with a `status` field of `ok`/`degraded`, for backward compatibility only.
+The backend and translation worker start only after migrations complete successfully. The frontend waits for a healthy backend.
+
+Local endpoints:
+
+- frontend: `http://localhost:3000`
+- backend: `http://localhost:8000`
+- PostgreSQL: `127.0.0.1:5432`
+- Redis: `127.0.0.1:6379`
+
+PostgreSQL and Redis are bound only to localhost in the development Compose file rather than all host interfaces.
+
+### 3. Verify health
 
 ```bash
 curl http://localhost:8000/health/live
 curl http://localhost:8000/health/ready
 ```
 
+`/health/live` is process liveness and does not depend on PostgreSQL or Redis.
+
+`/health/ready` returns `200` only when:
+
+- PostgreSQL is reachable;
+- the database `alembic_version` exactly matches the Alembic head(s) shipped with the running backend image; and
+- Redis is reachable.
+
+A stale or missing database schema therefore makes readiness fail with `503` even if PostgreSQL still accepts `SELECT 1`.
+
+`/health` is retained as a compatibility endpoint and reports `ok`/`degraded` without exposing credentials or connection strings.
+
 ### 4. Create the first administrator
 
-After `/health/ready` returns `200`, run the CLI bootstrap inside the `backend` service:
+After readiness succeeds:
 
 ```bash
 docker compose exec -it backend python -m app.auth.bootstrap_admin
 ```
 
-Enter an email address and a password of 8-200 characters when prompted. This CLI is the only first-administrator and recovery path; it has no HTTP endpoint. The interactive command avoids persisting `ADMIN_EMAIL` or `ADMIN_PASSWORD` in the container configuration.
+Enter the administrator email and password interactively. This CLI is the only first-administrator/recovery path; there is no public bootstrap HTTP endpoint.
 
-### 5. Log in and use a protected API
+Concurrent bootstrap attempts are serialized in PostgreSQL, and the ordinary admin API prevents demoting or deactivating the last active administrator.
 
-`POST /api/v1/auth/login` accepts JSON with an email and password. It returns `access_token`, `token_type` (`bearer`), `expires_in`, and the authenticated user:
+### 5. Log in
 
 ```bash
 curl -X POST "http://localhost:8000/api/v1/auth/login" \
@@ -142,118 +123,48 @@ curl -X POST "http://localhost:8000/api/v1/auth/login" \
   -d '{"email":"admin@example.com","password":"<admin-password>"}'
 ```
 
-For a temporary POSIX shell session, copy the `access_token` from that response into a shell variable:
+The response contains a short-lived Bearer access token. The browser keeps this token in memory only; there is no refresh token, authentication cookie, `localStorage`, or `sessionStorage` persistence.
+
+For a temporary shell session:
 
 ```bash
-export TOKEN="<access_token from login response>"
+export TOKEN="<access_token>"
 ```
 
-The browser frontend keeps its access token in memory only. `TOKEN` above is likewise a temporary development-shell variable; do not store access tokens in `.env`, shell profiles, files, or browser storage.
+Do not store access tokens in `.env`, files, or persistent shell configuration.
 
-## Development
+## Authentication and RBAC
 
-### Backend
+Passwords are hashed with Argon2id. JWT signing is HS256-only, `JWT_SECRET` is mandatory, and the configured secret must contain at least 32 characters.
 
-```bash
-cd backend
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload
-```
-
-### Frontend
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-## Environment variables
-
-See [.env.example](.env.example) for the supported settings.
-
-Key AI settings:
-
-```env
-OPENAI_API_KEY=
-OPENAI_MODEL=gpt-4o
-OPENAI_BASE_URL=
-ANTHROPIC_API_KEY=
-ANTHROPIC_MODEL=claude-3-5-sonnet-20240620
-DEEPL_API_KEY=
-DEEPL_USE_PRO=false
-DEFAULT_AI_PROVIDER=openai
-DEFAULT_AI_MODEL=gpt-4o
-TRANSLATION_TIMEOUT=30
-MAX_RETRIES=3
-```
-
-PR #5 implements the queue orchestration layer: segment translation jobs are persisted in PostgreSQL, queued to a Redis Streams consumer group, and processed by the async translator worker. The worker records durable job status and updates segment translation fields only after provider success.
-
-## Implementation Status
-
-### ✅ Translation workspace and operational platform
-
-#### Implemented
-- **FastAPI CRUD API** for books, chapters, segments, translation jobs, and quality reports
-- **DOCX and EPUB ingestion** with validation, parsing, deterministic segmentation, and PostgreSQL persistence
-- **Provider abstraction** for OpenAI, Anthropic, and DeepL
-- **Durable translation job orchestration** backed by PostgreSQL and Redis Streams
-- **Async worker processing** with retry, idempotency, reclaim, and stale-response protection
-- **Canonical QA evaluation** and quality reporting with deterministic/full evaluation modes
-- **Benchmark execution engine** for dry-run provider comparison
-- **Frontend operational workspace** for Books, Translation Jobs, Quality, and Benchmarks
-- **Translation Editor workflow** for manual segment translation review and save
-- **Authentication & role-based access control** for the API and workspace UI (see below)
-- **Health check and deployment-safe operational endpoints** for database and Redis status
-- **Testing framework** with async and frontend coverage
-
-#### Current positioning
-This project is a production-oriented advanced MVP / pre-production platform for technical book translation. It includes the major operational and AI orchestration layers plus a first authentication/RBAC foundation, but deployment hardening, production observability, secret rotation, backup strategy, and full production-grade operational validation remain follow-up work outside this scope. **This project is not yet production-ready.**
-
-## Authentication & Roles
-
-### Overview
-The API and workspace UI use local email/password authentication. Passwords are hashed with **Argon2id** (via `argon2-cffi`), a memory-hard password hashing function. Authentication uses a short-lived JSON Web Token (JWT, HS256) **access token only**. The frontend keeps that access token in memory and never stores it in `localStorage`, `sessionStorage`, or an authentication cookie. Browser API requests send a Bearer token with `credentials: 'omit'`; backend CORS uses `allow_credentials=False`. Access tokens carry `sub`, `iat`, `exp`, and `token_type=access`. There is no refresh token, refresh endpoint, refresh cookie, silent refresh flow, or authentication cookie. Page reload and explicit logout clear the in-memory authentication state and require a new login; JWT-expiry reauthentication is handled explicitly by the UI. JWT signing is HS256-only, and `JWT_SECRET` is required and must contain at least 32 characters.
-
-### Roles
 | Capability | `viewer` | `editor` | `admin` |
 |---|---:|---:|---:|
-| Read books, chapters, segments, translation jobs, QA, and benchmarks | Yes | Yes | Yes |
-| Upload documents and create/update books, chapters, and segments | No | Yes | Yes |
-| Edit translations, run translation jobs, and run QA checks | No | Yes | Yes |
+| Read books/chapters/segments/jobs/QA/benchmarks | Yes | Yes | Yes |
+| Upload and create/update translation content | No | Yes | Yes |
+| Run translation jobs and QA | No | Yes | Yes |
+| Create/resume persisted dry-run benchmarks | No | Yes | Yes |
+| Create/resume live-provider benchmarks | No | No | Yes |
+| Cancel benchmarks | No | No | Yes |
 | Delete protected resources | No | No | Yes |
-| Create a dry-run benchmark | No | Yes | Yes |
-| Resume a persisted dry-run benchmark | No | Yes | Yes |
-| Create or resume a live-provider benchmark | No | No | Yes |
-| Cancel a benchmark | No | No | Yes |
-| Manage users, roles, and active state | No | No | Yes |
+| Manage users/roles/active state | No | No | Yes |
 
-`viewer` is a read-only role for protected business resources. `editor` includes viewer permissions plus non-destructive editing, upload, translation-job, QA, and dry-run benchmark operations. `admin` includes editor permissions plus destructive administration, user management, and live benchmark operations. In the frontend, Resume is hidden for viewers, limited to persisted `dry_run === true` runs for editors, and available for both dry-run and live runs for admins; Cancel is admin-only. Server-side role checks remain the security boundary.
+Server-side authorization is the security boundary; hiding controls in the frontend is only a UX measure.
 
-The public endpoints are `/`, `/health`, `/health/live`, `/health/ready`, and `POST /api/v1/auth/login`. `/health/live` is process liveness and does not depend on PostgreSQL or Redis. `/health/ready` returns `200` only when PostgreSQL and Redis are available, otherwise `503`; it is the Docker Compose backend healthcheck. Legacy `/health` remains a compatibility endpoint that returns `200` with `ok` or `degraded` status and dependency booleans. Protected business endpoints under `/api/v1/**`, including `/api/v1/auth/me`, require a valid Bearer access token.
+### Login throttling
 
-### Bootstrap flow
-Run `python -m app.auth.bootstrap_admin` with `ADMIN_EMAIL` and `ADMIN_PASSWORD` environment variables, or provide them interactively at the CLI prompt. This is the only first-administrator and recovery path; there is no public bootstrap HTTP endpoint. Bootstrap succeeds when there are zero active administrators, including when viewer/editor users or inactive administrators already exist. It refuses when at least one active administrator exists. PostgreSQL transaction-scoped serialization ensures concurrent bootstrap invocations cannot create two active administrators.
+`POST /api/v1/auth/login` is protected by Redis-backed throttling:
 
-The ordinary admin API preserves the last-active-admin invariant: it cannot deactivate or demote the last active administrator. Recovery uses the CLI only after the active-administrator count reaches zero.
+- maximum 5 login attempts per normalized account identity per 60 seconds;
+- maximum 30 login attempts per client IP per 60 seconds;
+- exceeded limits return `429` with `Retry-After`;
+- raw email addresses and IP addresses are not stored in Redis rate-limit keys; identifiers are HMAC-SHA256 derived using the application secret;
+- if Redis is unavailable, login throttling fails closed with `503` rather than silently bypassing protection.
 
-### Required environment variables
-See `.env.example`: `JWT_SECRET`, `JWT_ALGORITHM`, `JWT_EXPIRE_MINUTES`, `CORS_ALLOWED_ORIGINS`, `ADMIN_EMAIL`, and `ADMIN_PASSWORD`.
+The rate limiter is request throttling, not a durable account-lockout system.
 
-### Security assumptions & known limitations
-- Access tokens are short-lived JWTs and are held only in frontend memory. Logout clears the in-memory token; there is no refresh-token flow in this PR.
-- `JWT_SECRET` is mandatory and must be at least 32 characters; no production secret is shipped. Only HS256 JWT signing is accepted.
-- Role checks are enforced server-side on every mutating endpoint; the frontend only hides/disables controls for UX and must never be relied on as the security boundary.
-- This is an advanced MVP: rate limiting on login, account lockout, password reset flow, audit logging, and multi-tenant isolation are out of scope for this PR.
+## Protected API example
 
-## API usage
-
-### Upload a document
-
-This endpoint requires an `editor` or `admin` Bearer access token. Obtain a temporary `TOKEN` through the Quick Start login flow above; do not set `Content-Type` manually because `curl -F` supplies the multipart boundary.
+Upload requires an `editor` or `admin` token:
 
 ```bash
 curl -X POST "http://localhost:8000/api/v1/books/upload" \
@@ -261,116 +172,83 @@ curl -X POST "http://localhost:8000/api/v1/books/upload" \
   -F "file=@/path/to/chapter.docx" \
   -F "title=Example Book" \
   -F "author=Jane Author" \
-  -F "language=en" \
-  -F "description=Example description"
+  -F "language=en"
 ```
 
-Supported extensions:
-- `.docx`
-- `.epub`
+Supported upload formats: `.docx` and `.epub`. Default maximum upload size is 25 MB.
 
-Maximum upload size: 25 MB
+## Development without Docker
 
-Success response example:
-
-```json
-{
-  "book": {
-    "id": 1,
-    "title": "Example Book",
-    "author": "Jane Author",
-    "file_path": "9f1d1a6b6d514c45af4d2f8d4fdbaf18.docx",
-    "file_type": "docx",
-    "language": "en",
-    "status": "parsed"
-  },
-  "chapters_count": 2,
-  "segments_count": 12
-}
-```
-
-Possible error responses:
-- `413` payload_too_large for oversized uploads
-- `415` unsupported_media_type for unsupported extensions
-- `422` validation_error for empty or invalid files, traversal issues, or unreadable documents
-
-### 🚀 Quick Start - Development
-
-#### Backend
+### Backend
 
 ```bash
 cd backend
 python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-
-# Run database migrations
 alembic upgrade head
-
-# Start development server
 uvicorn app.main:app --reload
 ```
 
-#### Frontend
+`requirements.txt` contains development/test dependencies. `requirements-runtime.txt` is the smaller runtime dependency set used by the backend Docker image.
+
+### Frontend
 
 ```bash
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
 
-#### Testing
+Useful frontend checks:
+
+```bash
+npm run typecheck
+npm run lint
+npm test
+npm run build
+```
+
+### Backend tests
 
 ```bash
 cd backend
 pytest tests/ -v
 ```
 
-### 🐳 Docker Compose
+GitHub Actions additionally runs PostgreSQL and Redis integration coverage and Alembic migrations.
 
-```bash
-# Copy environment template
-cp .env.example .env
+## Docker CI guarantees
 
-# Generate a unique local JWT_SECRET, then set JWT_SECRET=<output> in .env
-python -c "import secrets; print(secrets.token_urlsafe(48))"
+The Docker Compose validation workflow verifies more than YAML syntax. It checks that:
 
-# Start all services
-docker compose up --build
+- `JWT_SECRET` is required;
+- `POSTGRES_PASSWORD` is required;
+- the migration service executes `alembic upgrade head`;
+- backend and worker wait for successful migrations;
+- the frontend receives `NEXT_PUBLIC_API_URL` at build time;
+- a clean Docker deployment can build and start the production frontend/backend stack;
+- `/health/ready` succeeds at the current Alembic head;
+- the expected `users` table exists;
+- forcing a stale Alembic revision makes readiness return `503`;
+- restoring the current head restores readiness.
 
-# Verify liveness and readiness
-curl http://localhost:8000/health/live
-curl http://localhost:8000/health/ready
-```
+## Security and deployment notes
 
-## Architecture Notes
+The repository is an advanced MVP / pre-production platform, not a finished production deployment. Before public or high-value production use, remaining work includes at least:
 
-### Current Implementation
-- **Backend**: FastAPI with SQLAlchemy async ORM
-- **Database**: PostgreSQL with Alembic migrations
-- **Cache/Queue**: Redis (via async Python client and RQ)
-- **Frontend**: Next.js 15 with React 19 and TypeScript
-- **Workers**: Async background workers for job processing
+- GitHub branch protection/rulesets and required review/status gates;
+- durable account lockout policy if required by the deployment threat model;
+- password reset/recovery workflow beyond administrator CLI recovery;
+- audit logging for authentication, user administration, destructive actions, and live-provider operations;
+- server-side session/token revocation if immediate revocation is required;
+- Redis authentication/TLS or a managed private Redis service;
+- production secret management rather than local `.env` files;
+- backup/restore procedures for PostgreSQL and uploaded documents;
+- metrics, centralized structured logs, tracing, and alerting;
+- multi-tenant isolation if the product will host independent organizations.
 
-### Design Decisions
-- Async/await throughout for non-blocking I/O
-- SQLAlchemy 2.0 with type hints for model safety
-- Pydantic v2 for configuration validation
-- Separate worker process for long-running jobs
-- Database migrations versioned with Alembic for team collaboration
-
-### Liveness and readiness health checks
-- `GET /health/live` — liveness. Returns `200` whenever the FastAPI process itself can handle a request; it never depends on PostgreSQL or Redis.
-- `GET /health/ready` — readiness. Checks PostgreSQL (`SELECT 1`) and Redis (`PING`) with a bounded per-check timeout. Returns `200` only when both are reachable; returns `503` if either (or both) is down. Dependency exceptions are caught and turned into a `503` response, never a `500`/traceback.
-- `GET /health` — legacy alias kept for backward compatibility. Always returns `200` with a `status` of `ok`/`degraded` plus `database`/`redis` booleans. New integrations should use `/health/live` and `/health/ready` instead.
-- All three endpoints return only booleans/status strings — no DSNs, Redis URLs, credentials, or tracebacks.
-- Docker Compose's `backend` service healthcheck calls `/health/ready`, so `depends_on: condition: service_healthy` (used by `frontend` and `translator-worker`) now reflects real readiness to serve business requests, not just process liveness. Retries/interval on the healthcheck provide retry behavior; the endpoint itself does not retry internally.
-
-## Roadmap
-
-- Stage 1: document management and parsing
-- Stage 2: translation engine and QA flow
-- Stage 3: professional translation platform
+The local Compose file keeps PostgreSQL and Redis reachable on localhost for development convenience. Production deployments should normally keep data services on private networks without host-published database/cache ports.
 
 ## License
 
