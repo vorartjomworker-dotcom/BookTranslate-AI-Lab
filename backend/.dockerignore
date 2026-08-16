@@ -1,0 +1,29 @@
+# Version-control and local environment metadata
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+
+# Python local environments and caches
+.venv
+venv
+__pycache__
+*.py[cod]
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov
+
+# Tests and local-only artifacts are not required by the runtime image
+tests
+*.log
+*.sqlite
+*.sqlite3
+
+# IDE / OS metadata
+.vscode
+.idea
+.DS_Store
+Thumbs.db
