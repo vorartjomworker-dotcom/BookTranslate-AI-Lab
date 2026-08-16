@@ -1,11 +1,15 @@
 import React from 'react';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 import { AuthProvider } from '../app/AuthProvider';
 import HomePage from '../app/page';
 import { setAccessToken } from '../app/lib/api';
 import type { Book, Segment } from '../app/lib/types';
+
+beforeEach(() => {
+  setAccessToken(null);
+});
 
 afterEach(() => {
   cleanup();
@@ -130,6 +134,7 @@ it('shows a login error and keeps the user on the login screen', async () => {
   expect(screen.getByText('Invalid email or password.')).toBeTruthy();
   expect(screen.queryByText(/session has expired/i)).toBeNull();
   expect(screen.queryByText('Distributed Systems')).toBeNull();
+  expect(screen.queryByRole('button', { name: /logout/i })).toBeNull();
 });
 
 it('logs out and returns to the login screen', async () => {
