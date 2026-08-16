@@ -1,0 +1,13 @@
+# Default owner for all repository changes.
+* @vorartjomworker-dotcom
+
+# Security- and deployment-sensitive areas.
+/backend/app/auth/ @vorartjomworker-dotcom
+/backend/app/core/security.py @vorartjomworker-dotcom
+/backend/app/dependencies/auth.py @vorartjomworker-dotcom
+/backend/alembic/ @vorartjomworker-dotcom
+/backend/Dockerfile @vorartjomworker-dotcom
+/frontend/Dockerfile @vorartjomworker-dotcom
+/docker-compose.yml @vorartjomworker-dotcom
+/.github/workflows/ @vorartjomworker-dotcom
+/.github/dependabot.yml @vorartjomworker-dotcom
