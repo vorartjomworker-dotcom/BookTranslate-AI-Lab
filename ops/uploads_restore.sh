@@ -25,7 +25,7 @@ if [[ -f "$checksum_file" ]]; then
   fi
 fi
 
-# Validate the archive before stopping application services.
+# Validate the archive before stopping application writers.
 docker compose run --rm --no-deps -T backend python -c '
 import pathlib, sys, tarfile
 with tarfile.open(fileobj=sys.stdin.buffer, mode="r|gz") as archive:
@@ -35,12 +35,12 @@ with tarfile.open(fileobj=sys.stdin.buffer, mode="r|gz") as archive:
             raise SystemExit(f"unsafe archive member: {member.name}")
 ' < "$archive"
 
-docker compose stop frontend backend translator-worker >/dev/null || true
+docker compose stop backend translator-worker >/dev/null || true
 
-restart_services() {
-  docker compose up -d backend translator-worker frontend >/dev/null || true
+restart_writers() {
+  docker compose up -d backend translator-worker >/dev/null || true
 }
-trap restart_services EXIT
+trap restart_writers EXIT
 
 # Restore into a staging directory first. Existing uploads are removed only after
 # the complete archive has been extracted successfully.
@@ -81,6 +81,6 @@ finally:
 ' < "$archive"
 
 trap - EXIT
-restart_services
+restart_writers
 
 echo "Uploads volume restored from: $archive"
