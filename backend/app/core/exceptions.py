@@ -81,6 +81,13 @@ class AuthenticationError(APIError):
         )
 
 
+class AccountLockedError(AuthenticationError):
+    """Internal authentication signal; public response intentionally matches invalid credentials."""
+
+    def __init__(self) -> None:
+        super().__init__("Invalid email or password.")
+
+
 class AuthorizationError(APIError):
     def __init__(self, message: str = "You do not have permission to perform this action.", *, details: Mapping[str, Any] | None = None) -> None:
         super().__init__(
