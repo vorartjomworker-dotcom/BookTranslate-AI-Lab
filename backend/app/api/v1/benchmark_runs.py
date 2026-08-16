@@ -153,8 +153,15 @@ async def get_benchmark_cases(run_id: str, db: AsyncSession = Depends(get_db), _
 
 
 @router.post("/benchmark-runs/{run_id}/resume", status_code=status.HTTP_202_ACCEPTED)
-async def resume_benchmark_run(run_id: str, db: AsyncSession = Depends(get_db), _: User = Depends(require_roles(*ADMIN_ROLES))) -> dict[str, Any]:
+async def resume_benchmark_run(
+    run_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_roles(*EDITOR_ROLES)),
+) -> dict[str, Any]:
     service = BenchmarkService(db)
+    run = await service.get_run(run_id)
+    if user.role != "admin" and not run.dry_run:
+        raise AuthorizationError("Only administrators may resume live provider benchmarks.")
     run = await service.resume_run(run_id)
     return {"run_id": run.run_id, "status": run.status, "resumed": True}
 
