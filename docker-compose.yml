@@ -33,6 +33,7 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://booktranslate:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/booktranslate}
       REDIS_URL: ${REDIS_URL:-redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0}
       UPLOAD_DIR: ${UPLOAD_DIR:-/var/lib/booktranslate/uploads}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
       JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-15}
@@ -99,6 +100,7 @@ services:
       TRANSLATION_DLQ_STREAM_NAME: ${TRANSLATION_DLQ_STREAM_NAME:-translation_jobs_dlq}
       TRANSLATION_CONSUMER_NAME: ${TRANSLATION_CONSUMER_NAME:-translator-worker-1}
       UPLOAD_DIR: ${UPLOAD_DIR:-/var/lib/booktranslate/uploads}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
       JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-15}
