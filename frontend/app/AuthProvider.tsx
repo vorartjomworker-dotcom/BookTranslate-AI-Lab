@@ -30,11 +30,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     setUnauthorizedHandler(() => {
-      // A 401 must not remount the workspace because the user may have an unsaved
-      // translation draft. Reauthentication is explicit and preserves the mounted
-      // workspace; a real logout uses a new workspace key and clears all local state.
-      if (hasSessionRef.current) setSessionExpired(true);
       setAccessToken(null);
+      if (!hasSessionRef.current) return;
+      // A 401 invalidates visible auth without remounting the workspace. Its owner
+      // identity stays available until the next login can compare user ids.
+      hasSessionRef.current = false;
+      setSessionExpired(true);
+      setUser(null);
+      setStatus('unauthenticated');
     });
     return () => setUnauthorizedHandler(null);
   }, []);
@@ -73,13 +76,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     hasSessionRef.current = false;
     pendingReauthRef.current = true;
     setAccessToken(null);
+    setSessionExpired(false);
     setUser(null);
     setStatus('unauthenticated');
     // Intentionally do not change workspaceVersion here: only `login` may decide to
     // remount, once it knows whether the same user reauthenticated.
   }, []);
 
-  const dismissSessionExpired = useCallback(() => setSessionExpired(false), []);
+  // Kept only for compatibility with existing consumers. It must never unlock a
+  // confirmed expired session; reauthentication is the only path out of the gate.
+  const dismissSessionExpired = useCallback(() => undefined, []);
 
   return (
     <AuthContext.Provider value={{ user, status, sessionExpired, login, logout, reauthenticate, dismissSessionExpired }}>

@@ -20,8 +20,21 @@ function errorMessage(error: unknown): string {
   return 'The action could not be completed.';
 }
 
+function SessionExpiredGate({ onLogInAgain }: { onLogInAgain: () => void }) {
+  return (
+    <main className="sessionExpiredShell">
+      <section className="panel sessionExpiredGate" role="alertdialog" aria-modal="true" aria-labelledby="sessionExpiredTitle" aria-describedby="sessionExpiredDescription">
+        <span className="eyebrow">AUTHENTICATION REQUIRED</span>
+        <h1 id="sessionExpiredTitle">Session expired</h1>
+        <p id="sessionExpiredDescription" className="mutedText">Sign in again to unlock your workspace. Unsaved changes will remain available after you reauthenticate.</p>
+        <button className="primaryButton" onClick={onLogInAgain}>Log in again <span>-&gt;</span></button>
+      </section>
+    </main>
+  );
+}
+
 export default function HomePage() {
-  const { user, status: authStatus, sessionExpired, logout, reauthenticate, dismissSessionExpired } = useAuth();
+  const { user, status: authStatus, sessionExpired, logout, reauthenticate } = useAuth();
   const [section, setSection] = useState<Section>('books');
   const [books, setBooks] = useState<Book[]>([]);
   const [selectedBook, setSelectedBook] = useState<Book | null>(null);
@@ -134,6 +147,7 @@ export default function HomePage() {
     const handleKeyDown = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
         event.preventDefault();
+        if (sessionExpired) return;
         if (!busy && !saveBusy && draftTranslation !== (selectedSegment.translated_text ?? '')) {
           void saveTranslation();
         }
@@ -141,7 +155,7 @@ export default function HomePage() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedSegment?.id, draftTranslation, busy, saveBusy, saveTranslation]);
+  }, [selectedSegment?.id, draftTranslation, busy, saveBusy, saveTranslation, sessionExpired]);
 
   function handleDraftChange(value: string) {
     draftTranslationRef.current = value;
@@ -275,6 +289,7 @@ export default function HomePage() {
 
   const current = sections.find((item) => item.id === section);
   if (authStatus === 'checking') return <main className="loadingState"><span className="loader" /> Loading workspace</main>;
+  if (sessionExpired) return <SessionExpiredGate onLogInAgain={reauthenticate} />;
   if (authStatus === 'unauthenticated') return <LoginView />;
   return <main className="appShell"><aside className="sidebar"><div className="brandMark"><span className="brandGlyph">BT</span><span><strong>BookTranslate</strong><small>AI LAB / WORKSPACE</small></span></div><div className="sidebarLabel">Workspace</div><nav className="sideNav" aria-label="Workspace sections">{sections.map((item) => <button key={item.id} className={section === item.id ? 'navItem active' : 'navItem'} onClick={() => changeSection(item.id)}><span>{item.number}</span>{item.label}</button>)}</nav><div className="sidebarFooter"><span>v0.1.0 / local workspace</span></div></aside><section className="contentArea"><header className="topBar"><div><span className="eyebrow">TRANSLATION OPERATIONS</span><h1>{current?.label}</h1></div><div className="userBadge"><span className="avatar" aria-hidden="true">BT</span><span className="userInfo"><strong>{user?.email}</strong><small>{user?.role}</small></span><button className="textButton" onClick={() => void logout()}>Logout</button></div></header>{sessionExpired && <div className="alert alertError" role="alert"><strong>Session expired</strong><span>Your session has expired. Please log in again. Unsaved changes remain in this editor until you sign back in.</span><button className="textButton" onClick={reauthenticate}>Log in again</button><button onClick={dismissSessionExpired} aria-label="Dismiss notice">×</button></div>}{error && <div className="alert alertError" role="alert"><strong>Action blocked</strong><span>{error}</span><button onClick={() => setError('')} aria-label="Dismiss error">×</button></div>}{notice && <div className="alert alertSuccess" role="status" aria-live="polite"><strong>Done</strong><span>{notice}</span><button onClick={() => setNotice('')} aria-label="Dismiss notice">×</button></div>}{loading ? <div className="loadingState"><span className="loader" /> Loading workspace</div> : <>{section === 'books' && <BooksView books={books} selectedBook={selectedBook} chapters={chapters} selectedChapter={selectedChapter} segments={segments} selectedSegment={selectedSegment} qualitySummary={qualitySummary} detailLoading={detailLoading} uploadFile={uploadFile} busy={busy} role={user?.role} draftTranslation={draftTranslation} isDirty={draftDirty} canSave={Boolean(selectedSegment) && draftTranslation !== (selectedSegment?.translated_text ?? '') && !busy && !saveBusy} onPrevious={() => moveToSegment(-1)} onNext={() => moveToSegment(1)} onDraftChange={handleDraftChange} onSave={saveTranslation} onReset={resetDraft} onBook={(book) => confirmNavigation(() => { void openBook(book); })} onChapter={(chapter) => confirmNavigation(() => { void openChapter(chapter); })} onSegment={(segment) => confirmNavigation(() => { void openSegment(segment); })} onFile={(event) => setUploadFile(event.target.files?.[0] || null)} onUpload={upload} />}{section === 'jobs' && <JobsView segment={selectedSegment} jobs={jobs} selectedJob={selectedJob} busy={busy} role={user?.role} onCreate={createJob} onRetry={retryJob} />}{section === 'quality' && <QualityView segment={selectedSegment} report={qualityReport} mode={qualityMode} busy={busy} role={user?.role} onMode={setQualityMode} onCheck={runQualityCheck} />}{section === 'benchmarks' && <BenchmarksView runs={runs} selectedRun={selectedRun} cases={benchmarkCases} form={benchmarkForm} busy={busy} role={user?.role} detailLoading={detailLoading} onForm={setBenchmarkForm} onCreate={createBenchmark} onRun={openRun} onResume={resumeRun} onCancel={cancelRun} onExport={exportRun} />}</>}</section></main>;
 }

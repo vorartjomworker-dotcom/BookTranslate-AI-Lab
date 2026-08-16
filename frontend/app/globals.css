@@ -45,6 +45,10 @@ button { cursor: pointer; }
 .loginShell { min-height: 100vh; display: grid; place-items: center; background: linear-gradient(135deg, #f4f6f2 0%, #eef3ef 55%, #f7f2eb 100%); padding: 24px; }
 .loginPanel { width: 100%; max-width: 380px; display: grid; gap: 16px; }
 .loginPanel h1 { margin: 4px 0 0; font-size: 28px; font-weight: 400; }
+.sessionExpiredShell { min-height: 100vh; display: grid; place-items: center; background: #1d2a2e; padding: 24px; }
+.sessionExpiredGate { width: 100%; max-width: 440px; display: grid; gap: 18px; border-top: 3px solid var(--orange); }
+.sessionExpiredGate h1 { margin: 0; font-size: 30px; font-weight: 400; }
+.sessionExpiredGate .primaryButton { justify-self: start; }
 .alert { display: flex; align-items: center; gap: 13px; padding: 13px 16px; margin-bottom: 18px; border: 1px solid; font: 13px Arial, sans-serif; }
 .alert strong { font-size: 10px; letter-spacing: .1em; text-transform: uppercase; }
 .alert span { color: var(--muted); }

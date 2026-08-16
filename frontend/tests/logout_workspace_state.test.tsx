@@ -166,8 +166,9 @@ it('preserves an unsaved draft across session-expiry reauthentication', async ()
     expect.stringContaining('/api/v1/segments/21/translation'),
     expect.objectContaining({ method: 'PATCH' }),
   ));
-  await screen.findByText('Session expired');
-  expect(screen.getByDisplayValue('Unsaved draft text')).toBeTruthy();
+  await screen.findByRole('alertdialog', { name: 'Session expired' });
+  expect(screen.queryByDisplayValue('Unsaved draft text')).toBeNull();
+  expect(screen.queryByText('Source text')).toBeNull();
 
   fireEvent.click(screen.getByRole('button', { name: /log in again/i }));
   await screen.findByRole('heading', { name: 'Sign in' });
@@ -227,8 +228,9 @@ it('remounts and clears the previous user workspace when a different user reauth
     expect.stringContaining('/api/v1/segments/21/translation'),
     expect.objectContaining({ method: 'PATCH' }),
   ));
-  await screen.findByText('Session expired');
-  expect(screen.getByDisplayValue('User A secret draft')).toBeTruthy();
+  await screen.findByRole('alertdialog', { name: 'Session expired' });
+  expect(screen.queryByDisplayValue('User A secret draft')).toBeNull();
+  expect(screen.queryByText('Source text')).toBeNull();
 
   fireEvent.click(screen.getByRole('button', { name: /log in again/i }));
   await screen.findByRole('heading', { name: 'Sign in' });

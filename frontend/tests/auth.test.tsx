@@ -171,7 +171,7 @@ it('hides mutation controls for a viewer role', async () => {
   expect(screen.getByLabelText('Translation')).toHaveProperty('readOnly', true);
 });
 
-it('keeps the unsaved draft visible when a save fails with an expired session', async () => {
+it('blocks workspace visibility and interaction when a save fails with an expired session', async () => {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method || 'GET';
@@ -197,6 +197,13 @@ it('keeps the unsaved draft visible when a save fails with an expired session', 
   fireEvent.click(screen.getByRole('button', { name: /save translation/i }));
 
   await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/v1/segments/21/translation'), expect.objectContaining({ method: 'PATCH' })));
-  // The draft must remain visible: a 401 during save must never silently discard local edits.
-  expect(screen.getByDisplayValue('Unsaved draft text')).toBeTruthy();
+  const dialog = await screen.findByRole('alertdialog', { name: 'Session expired' });
+  expect(dialog).toHaveAttribute('aria-modal', 'true');
+  expect(screen.getByRole('button', { name: /log in again/i })).toBeTruthy();
+  expect(screen.queryByLabelText('Translation')).toBeNull();
+  expect(screen.queryByText('Source text')).toBeNull();
+  expect(screen.queryByRole('button', { name: /dismiss/i })).toBeNull();
+
+  fireEvent.keyDown(window, { key: 's', ctrlKey: true });
+  expect(fetchMock.mock.calls.filter(([input]) => String(input).includes('/api/v1/segments/21/translation'))).toHaveLength(1);
 });
