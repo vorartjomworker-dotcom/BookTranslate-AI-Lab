@@ -23,6 +23,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [sessionExpired, setSessionExpired] = useState(false);
   const [workspaceVersion, setWorkspaceVersion] = useState(0);
   const hasSessionRef = useRef(false);
+  // Owner of the currently mounted workspace subtree (identity boundary for reauth).
+  const workspaceOwnerIdRef = useRef<number | null>(null);
+  // True only while a session-expiry reauthentication is pending a fresh login.
+  const pendingReauthRef = useRef(false);
 
   useEffect(() => {
     setUnauthorizedHandler(() => {
@@ -37,6 +41,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const login = useCallback(async (email: string, password: string) => {
     const response = await apiLogin(email, password);
+    if (pendingReauthRef.current) {
+      // Same-user reauth keeps the workspace; a different user must never see it,
+      // so remount before the new user/status become visible.
+      if (workspaceOwnerIdRef.current !== null && workspaceOwnerIdRef.current !== response.user.id) {
+        setWorkspaceVersion((current) => current + 1);
+      }
+      pendingReauthRef.current = false;
+    }
+    workspaceOwnerIdRef.current = response.user.id;
     hasSessionRef.current = true;
     setSessionExpired(false);
     setUser(response.user);
@@ -45,6 +58,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = useCallback(async () => {
     hasSessionRef.current = false;
+    pendingReauthRef.current = false;
+    workspaceOwnerIdRef.current = null;
     setAccessToken(null);
     setSessionExpired(false);
     setUser(null);
@@ -56,11 +71,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const reauthenticate = useCallback(() => {
     hasSessionRef.current = false;
+    pendingReauthRef.current = true;
     setAccessToken(null);
     setUser(null);
     setStatus('unauthenticated');
-    // Intentionally do not change workspaceVersion: the same HomePage instance must
-    // survive the login gate so an unsaved draft can be restored after session expiry.
+    // Intentionally do not change workspaceVersion here: only `login` may decide to
+    // remount, once it knows whether the same user reauthenticated.
   }, []);
 
   const dismissSessionExpired = useCallback(() => setSessionExpired(false), []);

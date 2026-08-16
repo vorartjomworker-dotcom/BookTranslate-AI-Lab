@@ -175,4 +175,72 @@ it('preserves an unsaved draft across session-expiry reauthentication', async ()
 
   await screen.findByDisplayValue('Unsaved draft text');
   expect(screen.getByDisplayValue('Unsaved draft text')).toBeTruthy();
+  // Same user.id reauthenticated: workspace selection must also survive, not just the draft.
+  expect(screen.getByText('Distributed Systems')).toBeTruthy();
+  expect(screen.getByText('Intro')).toBeTruthy();
+});
+
+it('remounts and clears the previous user workspace when a different user reauthenticates after session expiry', async () => {
+  const otherUser = {
+    id: 2,
+    email: 'other-editor@example.com',
+    role: 'editor' as const,
+    is_active: true,
+    created_at: '2026-01-01T00:00:00Z',
+  };
+  let activeUserId = editorUser.id;
+
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method || 'GET';
+    if (url.endsWith('/api/v1/auth/login') && method === 'POST') {
+      const body = init?.body ? JSON.parse(String(init.body)) : {};
+      if (body.email === otherUser.email) {
+        activeUserId = otherUser.id;
+        return json({ access_token: 'test-token-b', token_type: 'bearer', expires_in: 900, user: otherUser });
+      }
+      activeUserId = editorUser.id;
+      return json({ access_token: 'test-token-a', token_type: 'bearer', expires_in: 900, user: editorUser });
+    }
+    if (url.endsWith('/api/v1/segments/21/translation') && method === 'PATCH') {
+      return json({ code: 'unauthorized', message: 'Your session has expired. Please log in again.', details: {}, request_id: 'req-expired' }, 401);
+    }
+    if (activeUserId === otherUser.id) {
+      if (url.endsWith('/api/v1/books?page=1&page_size=50')) return json({ items: [] });
+      if (url.endsWith('/api/v1/benchmark-runs?page=1&page_size=50')) return json({ items: [] });
+      return null;
+    }
+    const workspaceResponse = workspaceRoutes(url, method);
+    if (workspaceResponse) return workspaceResponse;
+    throw new Error(`Unexpected request: ${method} ${url}`);
+  });
+  vi.stubGlobal('fetch', fetchMock);
+
+  render(<AuthProvider><HomePage /></AuthProvider>);
+  await signIn();
+  await openEditor();
+
+  fireEvent.change(screen.getByLabelText('Translation'), { target: { value: 'User A secret draft' } });
+  fireEvent.click(screen.getByRole('button', { name: /save translation/i }));
+
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+    expect.stringContaining('/api/v1/segments/21/translation'),
+    expect.objectContaining({ method: 'PATCH' }),
+  ));
+  await screen.findByText('Session expired');
+  expect(screen.getByDisplayValue('User A secret draft')).toBeTruthy();
+
+  fireEvent.click(screen.getByRole('button', { name: /log in again/i }));
+  await screen.findByRole('heading', { name: 'Sign in' });
+  fireEvent.change(screen.getByLabelText('Email'), { target: { value: otherUser.email } });
+  fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'other-correct-password' } });
+  fireEvent.click(screen.getByRole('button', { name: /sign in/i }));
+
+  await waitFor(() => expect(screen.getByText(otherUser.email)).toBeTruthy());
+
+  // Different user.id: user A's draft, selection, and derived state must never be visible to B.
+  expect(screen.queryByDisplayValue('User A secret draft')).toBeNull();
+  expect(screen.queryByText('Distributed Systems')).toBeNull();
+  expect(screen.queryByText('Intro')).toBeNull();
+  expect(screen.queryByText('Source text')).toBeNull();
 });
