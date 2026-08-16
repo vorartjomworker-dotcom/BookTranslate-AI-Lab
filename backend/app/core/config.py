@@ -7,6 +7,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     app_name: str = "BookTranslate AI Lab"
     log_level: str = "INFO"
+    metrics_enabled: bool = False
+    metrics_bearer_token: str = ""
     database_url: str = "postgresql+asyncpg://booktranslate:booktranslate@postgres:5432/booktranslate"
     redis_url: str = "redis://redis:6379/0"
 
@@ -87,6 +89,17 @@ class Settings(BaseSettings):
         if normalized not in allowed:
             raise ValueError("log_level must be one of: DEBUG, INFO, WARNING, ERROR, CRITICAL")
         return normalized
+
+    @field_validator("metrics_bearer_token")
+    @classmethod
+    def normalize_metrics_bearer_token(cls, value: str) -> str:
+        return value.strip()
+
+    @model_validator(mode="after")
+    def validate_metrics_security(self) -> "Settings":
+        if self.metrics_enabled and len(self.metrics_bearer_token) < 32:
+            raise ValueError("metrics_bearer_token must contain at least 32 characters when metrics are enabled")
+        return self
 
     @field_validator("default_ai_provider")
     @classmethod
