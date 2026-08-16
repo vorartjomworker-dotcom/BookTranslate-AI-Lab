@@ -37,9 +37,18 @@ def test_http_exception_handler_preserves_custom_headers_without_overriding_json
 
 
 @pytest.fixture
-def client() -> TestClient:
-    """Provide a test client for the FastAPI app."""
-    return TestClient(app)
+def client():
+    """Provide a test client and always run FastAPI shutdown."""
+    with TestClient(app) as test_client:
+        yield test_client
+
+
+def test_lifespan_disposes_database_engine() -> None:
+    with patch("app.main.close_database", new_callable=AsyncMock) as mock_close:
+        with TestClient(app):
+            pass
+
+    mock_close.assert_awaited_once_with()
 
 
 def test_root_endpoint(client: TestClient) -> None:
@@ -86,8 +95,8 @@ async def test_health_check_both_ok() -> None:
         mock_db.return_value = True
         mock_redis.return_value = True
 
-        client = TestClient(app)
-        response = client.get("/health")
+        with TestClient(app) as client:
+            response = client.get("/health")
 
         assert response.status_code == 200
         data = response.json()
@@ -104,8 +113,8 @@ async def test_health_check_database_down() -> None:
         mock_db.side_effect = Exception("Connection refused")
         mock_redis.return_value = True
 
-        client = TestClient(app)
-        response = client.get("/health")
+        with TestClient(app) as client:
+            response = client.get("/health")
 
         assert response.status_code == 200
         data = response.json()
@@ -122,8 +131,8 @@ async def test_health_check_redis_down() -> None:
         mock_db.return_value = True
         mock_redis.side_effect = Exception("Connection refused")
 
-        client = TestClient(app)
-        response = client.get("/health")
+        with TestClient(app) as client:
+            response = client.get("/health")
 
         assert response.status_code == 200
         data = response.json()
@@ -140,8 +149,8 @@ async def test_health_check_both_down() -> None:
         mock_db.side_effect = Exception("Connection refused")
         mock_redis.side_effect = Exception("Connection refused")
 
-        client = TestClient(app)
-        response = client.get("/health")
+        with TestClient(app) as client:
+            response = client.get("/health")
 
         assert response.status_code == 200
         data = response.json()
@@ -176,8 +185,8 @@ async def test_health_live_returns_200_when_both_dependencies_down() -> None:
         mock_db.side_effect = Exception("Connection refused")
         mock_redis.side_effect = Exception("Connection refused")
 
-        client = TestClient(app)
-        response = client.get("/health/live")
+        with TestClient(app) as client:
+            response = client.get("/health/live")
 
         assert response.status_code == 200
         assert response.json() == {"status": "ok"}
@@ -191,8 +200,8 @@ async def test_health_ready_returns_200_when_both_ok() -> None:
         mock_db.return_value = True
         mock_redis.return_value = True
 
-        client = TestClient(app)
-        response = client.get("/health/ready")
+        with TestClient(app) as client:
+            response = client.get("/health/ready")
 
         assert response.status_code == 200
         data = response.json()
@@ -209,8 +218,8 @@ async def test_health_ready_returns_503_when_database_down() -> None:
         mock_db.side_effect = Exception("Connection refused")
         mock_redis.return_value = True
 
-        client = TestClient(app)
-        response = client.get("/health/ready")
+        with TestClient(app) as client:
+            response = client.get("/health/ready")
 
         assert response.status_code == 503
         data = response.json()
@@ -227,8 +236,8 @@ async def test_health_ready_returns_503_when_redis_down() -> None:
         mock_db.return_value = True
         mock_redis.side_effect = Exception("Connection refused")
 
-        client = TestClient(app)
-        response = client.get("/health/ready")
+        with TestClient(app) as client:
+            response = client.get("/health/ready")
 
         assert response.status_code == 503
         data = response.json()
@@ -245,8 +254,8 @@ async def test_health_ready_returns_503_when_both_down() -> None:
         mock_db.side_effect = Exception("Connection refused")
         mock_redis.side_effect = Exception("Connection refused")
 
-        client = TestClient(app)
-        response = client.get("/health/ready")
+        with TestClient(app) as client:
+            response = client.get("/health/ready")
 
         assert response.status_code == 503
         data = response.json()
@@ -264,9 +273,9 @@ async def test_health_endpoints_never_leak_secrets() -> None:
         mock_db.side_effect = Exception("Connection refused: postgresql://user:pass@host/db")
         mock_redis.side_effect = Exception("Connection refused: redis://user:pass@host:6379/0")
 
-        client = TestClient(app)
-        for path in ("/health", "/health/live", "/health/ready"):
-            response = client.get(path)
-            body_text = response.text.lower()
-            for needle in forbidden_substrings:
-                assert needle.lower() not in body_text, f"{path} leaked forbidden content: {needle}"
+        with TestClient(app) as client:
+            for path in ("/health", "/health/live", "/health/ready"):
+                response = client.get(path)
+                body_text = response.text.lower()
+                for needle in forbidden_substrings:
+                    assert needle.lower() not in body_text, f"{path} leaked forbidden content: {needle}"
