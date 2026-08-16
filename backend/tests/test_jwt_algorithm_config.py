@@ -14,6 +14,12 @@ def test_jwt_algorithm_defaults_to_hs256() -> None:
     assert configured.jwt_algorithm == "HS256"
 
 
+@pytest.mark.parametrize("secret", ["", "x" * 31])
+def test_jwt_secret_requires_at_least_32_characters(secret: str) -> None:
+    with pytest.raises(ValidationError, match="jwt_secret must contain at least 32 characters"):
+        Settings(jwt_secret=secret)
+
+
 def test_jwt_algorithm_normalizes_hs256_case() -> None:
     configured = Settings(jwt_secret=VALID_SECRET, jwt_algorithm="hs256")
     assert configured.jwt_algorithm == "HS256"

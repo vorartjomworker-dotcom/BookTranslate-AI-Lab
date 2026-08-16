@@ -93,7 +93,13 @@ Copy the example environment file:
 cp .env.example .env
 ```
 
-Update API keys as needed for your chosen providers.
+`.env.example` deliberately leaves `JWT_SECRET` empty. Generate a unique local development secret (Python standard library only) and set the resulting value in `.env` before starting Docker Compose:
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+```
+
+Set the output as `JWT_SECRET=<generated-value>` in `.env`. Do not commit `.env` or use a shared or production secret. Update AI provider keys in `.env` as needed for your chosen providers.
 
 ### 2. Start the stack
 
@@ -115,6 +121,34 @@ This starts:
 curl http://localhost:8000/health/live
 curl http://localhost:8000/health/ready
 ```
+
+### 4. Create the first administrator
+
+After `/health/ready` returns `200`, run the CLI bootstrap inside the `backend` service:
+
+```bash
+docker compose exec -it backend python -m app.auth.bootstrap_admin
+```
+
+Enter an email address and a password of 8-200 characters when prompted. This CLI is the only first-administrator and recovery path; it has no HTTP endpoint. The interactive command avoids persisting `ADMIN_EMAIL` or `ADMIN_PASSWORD` in the container configuration.
+
+### 5. Log in and use a protected API
+
+`POST /api/v1/auth/login` accepts JSON with an email and password. It returns `access_token`, `token_type` (`bearer`), `expires_in`, and the authenticated user:
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/auth/login" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@example.com","password":"<admin-password>"}'
+```
+
+For a temporary POSIX shell session, copy the `access_token` from that response into a shell variable:
+
+```bash
+export TOKEN="<access_token from login response>"
+```
+
+The browser frontend keeps its access token in memory only. `TOKEN` above is likewise a temporary development-shell variable; do not store access tokens in `.env`, shell profiles, files, or browser storage.
 
 ## Development
 
@@ -219,8 +253,11 @@ See `.env.example`: `JWT_SECRET`, `JWT_ALGORITHM`, `JWT_EXPIRE_MINUTES`, `CORS_A
 
 ### Upload a document
 
+This endpoint requires an `editor` or `admin` Bearer access token. Obtain a temporary `TOKEN` through the Quick Start login flow above; do not set `Content-Type` manually because `curl -F` supplies the multipart boundary.
+
 ```bash
 curl -X POST "http://localhost:8000/api/v1/books/upload" \
+  -H "Authorization: Bearer $TOKEN" \
   -F "file=@/path/to/chapter.docx" \
   -F "title=Example Book" \
   -F "author=Jane Author" \
@@ -294,6 +331,9 @@ pytest tests/ -v
 ```bash
 # Copy environment template
 cp .env.example .env
+
+# Generate a unique local JWT_SECRET, then set JWT_SECRET=<output> in .env
+python -c "import secrets; print(secrets.token_urlsafe(48))"
 
 # Start all services
 docker compose up --build

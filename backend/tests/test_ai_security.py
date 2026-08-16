@@ -83,6 +83,7 @@ def test_prompt_keeps_user_data_separate_from_system_instructions():
 def test_env_example_uses_safe_placeholders():
     content = (REPO_ROOT / ".env.example").read_text(encoding="utf-8")
     assert "=" in content
+    assert "# Required. Generate a local value before docker compose up; do not commit real secrets.\nJWT_SECRET=\n" in content
     assert "OPENAI_API_KEY=" in content
     assert "ANTHROPIC_API_KEY=" in content
     assert "DEEPL_API_KEY=" in content
