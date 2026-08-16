@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError
@@ -14,6 +15,20 @@ from app.schemas.user import UserCreate, UserRead, UserUpdate
 
 router = APIRouter(prefix="/api/v1/admin/users", tags=["admin"])
 
+# The DB unique index backing `users.normalized_email` is the source of truth for
+# duplicate detection; the pre-check in `create_user` is only a UX/perf optimization
+# and cannot prevent a TOCTOU race between two concurrent requests for the same email.
+_DUPLICATE_EMAIL_SQLSTATE = "23505"  # PostgreSQL unique_violation
+_DUPLICATE_EMAIL_CONSTRAINT = "ix_users_normalized_email"
+
+
+def _is_duplicate_user_email_integrity_error(exc: IntegrityError) -> bool:
+    orig = exc.orig
+    return (
+        getattr(orig, "sqlstate", None) == _DUPLICATE_EMAIL_SQLSTATE
+        and getattr(orig, "constraint_name", None) == _DUPLICATE_EMAIL_CONSTRAINT
+    )
+
 
 @router.get("", response_model=list[UserRead])
 async def list_users(db: AsyncSession = Depends(get_db), _: User = Depends(require_roles(*ADMIN_ROLES))) -> list[User]:
@@ -26,8 +41,14 @@ async def create_user(payload: UserCreate, db: AsyncSession = Depends(get_db), _
     normalized_email = normalize_email(payload.email)
     if await repository.get_by_normalized_email(normalized_email):
         raise ConflictError("A user with this email already exists.")
-    user = await repository.create(email=payload.email, password_hash=hash_password(payload.password), role=payload.role)
-    await db.commit()
+    try:
+        user = await repository.create(email=payload.email, password_hash=hash_password(payload.password), role=payload.role)
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        if _is_duplicate_user_email_integrity_error(exc):
+            raise ConflictError("A user with this email already exists.") from exc
+        raise
     return user
 
 
