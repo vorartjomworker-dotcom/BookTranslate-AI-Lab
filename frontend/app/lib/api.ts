@@ -86,7 +86,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     if (options.body && !(options.body instanceof FormData) && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
     const token = accessToken;
     if (token && !headers.has('Authorization')) headers.set('Authorization', `Bearer ${token}`);
-    const response = await fetch(`${API_URL}${path}`, { ...options, headers, credentials: 'include', signal: controller.signal });
+    const response = await fetch(`${API_URL}${path}`, { ...options, headers, credentials: 'omit', signal: controller.signal });
     if (!response.ok) {
       if (response.status === 401 && token && unauthorizedHandler) unauthorizedHandler();
       throw new ApiError(response.status, await parseEnvelope(response));
