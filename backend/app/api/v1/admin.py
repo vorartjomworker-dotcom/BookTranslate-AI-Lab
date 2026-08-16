@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.audit import AuditService, audit_hash
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.core.roles import ADMIN_ROLES, ROLE_ADMIN
 from app.core.security import hash_password, normalize_email
@@ -55,25 +56,75 @@ async def list_users(db: AsyncSession = Depends(get_db), _: User = Depends(requi
 
 
 @router.post("", response_model=UserRead, status_code=status.HTTP_201_CREATED)
-async def create_user(payload: UserCreate, db: AsyncSession = Depends(get_db), _: User = Depends(require_roles(*ADMIN_ROLES))) -> User:
+async def create_user(
+    payload: UserCreate,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    actor: User = Depends(require_roles(*ADMIN_ROLES)),
+) -> User:
     repository = UserRepository(db)
+    audit = AuditService(db)
+    actor_id = actor.id
+    request_id = getattr(request.state, "request_id", None)
     normalized_email = normalize_email(payload.email)
+    subject_hash = audit_hash("user_email", normalized_email)
+
     if await repository.get_by_normalized_email(normalized_email):
+        await audit.record(
+            action="admin.user.create",
+            outcome="failure",
+            actor_user_id=actor_id,
+            target_type="user",
+            subject_hash=subject_hash,
+            request_id=request_id,
+            details={"reason": "duplicate_email"},
+        )
+        await db.commit()
         raise ConflictError("A user with this email already exists.")
+
     try:
         user = await repository.create(email=payload.email, password_hash=hash_password(payload.password), role=payload.role)
+        await db.flush()
+        await audit.record(
+            action="admin.user.create",
+            outcome="success",
+            actor_user_id=actor_id,
+            target_type="user",
+            target_id=user.id,
+            subject_hash=subject_hash,
+            request_id=request_id,
+            details={"role": payload.role},
+        )
         await db.commit()
     except IntegrityError as exc:
         await db.rollback()
         if _is_duplicate_user_email_integrity_error(exc):
+            await audit.record(
+                action="admin.user.create",
+                outcome="failure",
+                actor_user_id=actor_id,
+                target_type="user",
+                subject_hash=subject_hash,
+                request_id=request_id,
+                details={"reason": "duplicate_email_race"},
+            )
+            await db.commit()
             raise ConflictError("A user with this email already exists.") from exc
         raise
     return user
 
 
 @router.patch("/{user_id}", response_model=UserRead)
-async def update_user(user_id: int, payload: UserUpdate, db: AsyncSession = Depends(get_db), _: User = Depends(require_roles(*ADMIN_ROLES))) -> User:
+async def update_user(
+    user_id: int,
+    payload: UserUpdate,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    actor: User = Depends(require_roles(*ADMIN_ROLES)),
+) -> User:
     repository = UserRepository(db)
+    audit = AuditService(db)
+    request_id = getattr(request.state, "request_id", None)
     user = await repository.get_by_id(user_id)
     if user is None:
         raise NotFoundError("User not found.")
@@ -100,6 +151,16 @@ async def update_user(user_id: int, payload: UserUpdate, db: AsyncSession = Depe
         active_admins = await repository.lock_active_admins()
         active_admin_ids = {admin.id for admin in active_admins}
         if user.id in active_admin_ids and len(active_admins) == 1:
+            await audit.record(
+                action="admin.user.update",
+                outcome="denied",
+                actor_user_id=actor.id,
+                target_type="user",
+                target_id=user.id,
+                request_id=request_id,
+                details={"reason": "last_active_admin", "changed_fields": sorted(changes)},
+            )
+            await db.commit()
             raise ConflictError(
                 "Cannot deactivate or demote the last active administrator.",
                 details={"user_id": user.id},
@@ -107,6 +168,16 @@ async def update_user(user_id: int, payload: UserUpdate, db: AsyncSession = Depe
 
     for field, value in changes.items():
         setattr(user, field, value)
+
+    await audit.record(
+        action="admin.user.update",
+        outcome="success",
+        actor_user_id=actor.id,
+        target_type="user",
+        target_id=user.id,
+        request_id=request_id,
+        details={"changed_fields": sorted(changes)},
+    )
     await db.commit()
     await db.refresh(user)
     return user
