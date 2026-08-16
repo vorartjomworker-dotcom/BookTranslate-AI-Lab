@@ -159,6 +159,14 @@ class Settings(BaseSettings):
             raise ValueError("jwt_secret must contain at least 32 characters")
         return secret
 
+    @field_validator("jwt_algorithm")
+    @classmethod
+    def validate_jwt_algorithm(cls, value: str) -> str:
+        algorithm = value.strip().upper()
+        if algorithm != "HS256":
+            raise ValueError("jwt_algorithm must be HS256")
+        return algorithm
+
     @field_validator("jwt_expire_minutes")
     @classmethod
     def validate_auth_durations(cls, value: int, info: ValidationInfo) -> int:
