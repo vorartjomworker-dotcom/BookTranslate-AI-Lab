@@ -20,7 +20,19 @@ from argon2.exceptions import VerifyMismatchError, InvalidHashError
 
 from app.core.config import settings
 
+PASSWORD_MIN_LENGTH = 8
+PASSWORD_MAX_LENGTH = 200
+
 _password_hasher = PasswordHasher()
+
+
+def validate_password_policy(password: str) -> str:
+    """Validate the shared account/bootstrap password length policy."""
+    if len(password) < PASSWORD_MIN_LENGTH:
+        raise ValueError(f"Password must be at least {PASSWORD_MIN_LENGTH} characters long.")
+    if len(password) > PASSWORD_MAX_LENGTH:
+        raise ValueError(f"Password must be at most {PASSWORD_MAX_LENGTH} characters long.")
+    return password
 
 
 def hash_password(password: str) -> str:

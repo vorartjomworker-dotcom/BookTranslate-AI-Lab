@@ -7,7 +7,7 @@ from email_validator import validate_email
 
 from app.core.config import settings
 from app.core.roles import ROLE_ADMIN
-from app.core.security import hash_password, normalize_email
+from app.core.security import hash_password, normalize_email, validate_password_policy
 from app.db import async_session_factory
 from app.repositories.user_repository import UserRepository
 
@@ -16,6 +16,11 @@ async def bootstrap() -> None:
     email = os.getenv("ADMIN_EMAIL") or input("Admin email: ")
     password = os.getenv("ADMIN_PASSWORD") or getpass.getpass("Admin password: ")
     normalized_email = normalize_email(validate_email(email).email)
+    try:
+        validate_password_policy(password)
+    except ValueError as exc:
+        raise SystemExit(f"Admin bootstrap refused: {exc}") from None
+
     async with async_session_factory() as session:
         repository = UserRepository(session)
         if await repository.count_active_admins() > 0:

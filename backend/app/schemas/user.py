@@ -5,6 +5,8 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 from pydantic_core import PydanticCustomError
 
+from app.core.security import PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH
+
 
 class UserRead(BaseModel):
     id: int
@@ -18,7 +20,7 @@ class UserRead(BaseModel):
 
 class LoginRequest(BaseModel):
     email: EmailStr
-    password: str = Field(..., min_length=1, max_length=200)
+    password: str = Field(..., min_length=1, max_length=PASSWORD_MAX_LENGTH)
 
     model_config = ConfigDict(extra="forbid")
 
@@ -32,7 +34,7 @@ class AccessTokenResponse(BaseModel):
 
 class UserCreate(BaseModel):
     email: EmailStr
-    password: str = Field(..., min_length=8, max_length=200)
+    password: str = Field(..., min_length=PASSWORD_MIN_LENGTH, max_length=PASSWORD_MAX_LENGTH)
     role: str = Field(default="viewer", pattern="^(admin|editor|viewer)$")
 
     model_config = ConfigDict(extra="forbid")
