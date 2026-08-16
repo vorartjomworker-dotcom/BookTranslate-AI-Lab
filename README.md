@@ -179,7 +179,7 @@ This project is a production-oriented advanced MVP / pre-production platform for
 ## Authentication & Roles
 
 ### Overview
-The API and workspace UI require an authenticated user. Passwords are hashed with **Argon2id** (via `argon2-cffi`), a memory-hard, OWASP-recommended default that avoids bcrypt's 72-byte truncation issue. Sessions use a short-lived JSON Web Token (JWT, HS256) **access token** kept only in frontend memory (never `localStorage`), plus a longer-lived **refresh token** delivered as an `HttpOnly` cookie (`Secure`/`SameSite` configurable via settings) scoped to `/api/v1/auth`. JWTs always carry `sub`, `iat`, `exp`, and `type` (`access`/`refresh`); the decode path pins `algorithms=["HS256"]` so a forged token cannot smuggle a different or absent algorithm.
+The API and workspace UI require an authenticated user. Passwords are hashed with **Argon2id** (via `argon2-cffi`), a memory-hard password hashing function. Authentication uses a short-lived JSON Web Token (JWT, HS256) **access token only**. The frontend keeps that access token in memory and never stores it in `localStorage`, `sessionStorage`, or an authentication cookie. Access tokens carry `sub`, `iat`, `exp`, and `token_type=access`. There is **no refresh-token endpoint, refresh cookie, or silent refresh flow** in this PR. Page reload and explicit logout clear the in-memory authentication state and require a new login; JWT-expiry reauthentication is handled explicitly by the UI.
 
 ### Roles
 | Role | Read (Books/Chapters/Segments/Jobs/Quality/Benchmarks) | Create/update Books/Chapters/Segments, edit translations, upload | Run translation jobs / QA checks | Delete Books/Chapters/Segments | Benchmark create/resume/cancel |
