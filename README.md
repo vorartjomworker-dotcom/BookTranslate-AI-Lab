@@ -17,7 +17,9 @@ Implemented capabilities:
 - benchmark execution engine
 - Next.js operational workspace and translation editor
 - local email/password authentication with `viewer`, `editor`, and `admin` roles
+- Redis-backed login throttling and durable security audit trail
 - liveness/readiness endpoints and Docker Compose deployment validation
+- checksummed PostgreSQL/uploads backup helpers with CI-tested restore round trips
 
 ## Architecture
 
@@ -162,6 +164,14 @@ Server-side authorization is the security boundary; hiding controls in the front
 
 The rate limiter is request throttling, not a durable account-lockout system.
 
+### Durable security audit trail
+
+Alembic migration `007` adds the durable `audit_events` table. Security-sensitive events include login success/failure/rate-limit/dependency failures, administrator user creation/update and last-admin denials, destructive book/chapter/segment deletion, and benchmark create/resume/cancel operations.
+
+Audit entries carry actor/action/outcome/target/request ID and safe structured details. Raw passwords, JWTs, email addresses, client IP addresses, and benchmark cancellation text are not copied into audit details; identity/source identifiers use HMAC-derived hashes where required.
+
+Administrators can read the append-only application audit feed through `/api/v1/admin/audit-events`.
+
 ## Protected API example
 
 Upload requires an `editor` or `admin` token:
@@ -176,6 +186,21 @@ curl -X POST "http://localhost:8000/api/v1/books/upload" \
 ```
 
 Supported upload formats: `.docx` and `.epub`. Default maximum upload size is 25 MB.
+
+## Backup and recovery
+
+The repository contains guarded helpers for both authoritative PostgreSQL data and the uploaded DOCX/EPUB volume:
+
+```bash
+bash ops/postgres_backup.sh
+bash ops/uploads_backup.sh
+```
+
+Generated backups include SHA-256 manifests and `backups/` is ignored by Git. PostgreSQL dumps are validated with `pg_restore --list`; uploads archives are path-validated and reject symbolic/hard links.
+
+A PostgreSQL restore defaults to a separate verification database. In-place replacement requires explicit `ALLOW_IN_PLACE_RESTORE=YES` plus an exact database-name confirmation. Upload restoration similarly requires `ALLOW_UPLOAD_RESTORE=YES` and uses a staging directory before replacing existing files.
+
+See `ops/README.md` for the complete disaster-recovery runbook, off-host storage requirements, RPO/RTO guidance, restore drills, and optional PostgreSQL PITR/WAL guidance.
 
 ## Development without Docker
 
@@ -218,13 +243,11 @@ pytest tests/ -v
 
 GitHub Actions additionally runs PostgreSQL and Redis integration coverage and Alembic migrations.
 
-## Docker CI guarantees
+## CI guarantees
 
 The Docker Compose validation workflow verifies more than YAML syntax. It checks that:
 
-- `JWT_SECRET` is required;
-- `POSTGRES_PASSWORD` is required;
-- `REDIS_PASSWORD` is required;
+- `JWT_SECRET`, `POSTGRES_PASSWORD`, and `REDIS_PASSWORD` are required;
 - Redis starts with `--requirepass` and application services derive their Redis URL from the configured password;
 - unauthenticated Redis `PING` does not succeed while authenticated `PING` returns `PONG`;
 - the migration service executes `alembic upgrade head`;
@@ -233,10 +256,10 @@ The Docker Compose validation workflow verifies more than YAML syntax. It checks
 - Docker build contexts exclude local `.env`, dependency directories, and build caches;
 - a clean Docker deployment can build and start the production frontend/backend stack;
 - `/health/ready` succeeds at the current Alembic head;
-- the expected `users` table exists;
-- forcing a stale Alembic revision makes readiness return `503`;
-- restoring the current head restores readiness;
+- forcing a stale Alembic revision makes readiness return `503` and restoring the current head recovers readiness;
 - Hadolint is a blocking Dockerfile gate for warning/error findings.
+
+The dedicated `Backup & Restore Validation` workflow additionally creates real PostgreSQL and uploads sentinel data, creates checksummed backups, proves destructive restores are guarded, restores PostgreSQL into an isolated database, validates the restored Alembic revision/data, restores the uploads volume, and confirms backend readiness afterward.
 
 ## Security and deployment notes
 
@@ -245,11 +268,10 @@ The repository is an advanced MVP / pre-production platform, not a finished prod
 - GitHub branch protection/rulesets and required review/status gates;
 - durable account lockout policy if required by the deployment threat model;
 - password reset/recovery workflow beyond administrator CLI recovery;
-- audit logging for authentication, user administration, destructive actions, and live-provider operations;
 - server-side session/token revocation if immediate revocation is required;
 - TLS for Redis traffic or a managed private Redis service for production deployments;
 - production secret management rather than local `.env` files;
-- backup/restore procedures for PostgreSQL and uploaded documents;
+- production backup scheduling, off-host encrypted retention, monitoring, and PITR if required by RPO/RTO targets;
 - metrics, centralized structured logs, tracing, and alerting;
 - multi-tenant isolation if the product will host independent organizations.
 
