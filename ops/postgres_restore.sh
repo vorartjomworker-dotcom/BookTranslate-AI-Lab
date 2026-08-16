@@ -12,6 +12,7 @@ if [[ ! -f "$backup" ]]; then
 fi
 
 source_db="$(docker compose exec -T postgres sh -ec 'printf %s "$POSTGRES_DB"')"
+source_user="$(docker compose exec -T postgres sh -ec 'printf %s "$POSTGRES_USER"')"
 target_db="${RESTORE_DATABASE:-booktranslate_restore_verify}"
 
 if [[ ! "$target_db" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
@@ -50,7 +51,7 @@ EOF
 fi
 
 # Terminate connections, replace the target DB, and restore without archive ownership/ACL metadata.
-docker compose exec -T postgres psql -U "$source_db" -d postgres -v ON_ERROR_STOP=1 -v target="$target_db" <<'SQL'
+docker compose exec -T postgres psql -U "$source_user" -d postgres -v ON_ERROR_STOP=1 -v target="$target_db" <<'SQL'
 SELECT pg_terminate_backend(pid)
 FROM pg_stat_activity
 WHERE datname = :'target' AND pid <> pg_backend_pid();
@@ -62,7 +63,7 @@ docker compose exec -T postgres sh -ec \
   'exec pg_restore -U "$POSTGRES_USER" -d "$1" --no-owner --no-acl --exit-on-error' \
   sh "$target_db" < "$backup"
 
-restored_revision="$(docker compose exec -T postgres psql -U "$source_db" -d "$target_db" -Atc 'SELECT version_num FROM alembic_version;' | tr -d '\r')"
+restored_revision="$(docker compose exec -T postgres psql -U "$source_user" -d "$target_db" -Atc 'SELECT version_num FROM alembic_version;' | tr -d '\r')"
 if [[ -z "$restored_revision" ]]; then
   echo "Restore completed but alembic_version is missing or empty." >&2
   exit 1
