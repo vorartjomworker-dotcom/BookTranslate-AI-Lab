@@ -18,9 +18,10 @@ from app.dependencies.db import get_db
 
 
 @pytest.fixture
-def client() -> TestClient:
-    """Provide an unauthenticated test client for the FastAPI app."""
-    return TestClient(app)
+def client():
+    """Provide an unauthenticated test client and always run FastAPI shutdown."""
+    with TestClient(app) as test_client:
+        yield test_client
 
 
 def _rbac_stub_client(role: str) -> TestClient:
@@ -125,5 +126,5 @@ def mock_check_database() -> AsyncMock:
 
 @pytest.fixture
 def mock_check_redis() -> AsyncMock:
-    """Mock check_redis function."""
+    """Mock Redis connection."""
     return AsyncMock(return_value=True)
