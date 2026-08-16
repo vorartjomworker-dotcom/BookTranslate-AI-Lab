@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.audit import AuditService
 from app.benchmarks.dataset import TECHNICAL_TRANSLATION_DATASET_CHECKSUM, TECHNICAL_TRANSLATION_DATASET_VERSION, load_dataset
 from app.benchmarks.service import BenchmarkService
 from app.core.exceptions import AuthorizationError, ConflictError, ValidationError
@@ -43,7 +44,12 @@ class BenchmarkRunCancelRequest(BaseModel):
 
 
 @router.post("/benchmark-runs", status_code=status.HTTP_202_ACCEPTED)
-async def create_benchmark_run(payload: BenchmarkRunCreateRequest, db: AsyncSession = Depends(get_db), user: User = Depends(require_roles(*EDITOR_ROLES))) -> dict[str, Any]:
+async def create_benchmark_run(
+    payload: BenchmarkRunCreateRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_roles(*EDITOR_ROLES)),
+) -> dict[str, Any]:
     if user.role != "admin" and (not payload.dry_run or payload.confirm_live_provider):
         raise AuthorizationError("Only administrators may run live provider benchmarks.")
     dataset = load_dataset()
@@ -53,6 +59,20 @@ async def create_benchmark_run(payload: BenchmarkRunCreateRequest, db: AsyncSess
         raise ValidationError("Dataset version mismatch.", details={"requested": payload.dataset_version, "actual": dataset.version})
     if payload.dataset_checksum != dataset.checksum:
         raise ValidationError("Dataset checksum mismatch.", details={"requested": payload.dataset_checksum, "actual": dataset.checksum})
+
+    await AuditService(db).record(
+        action="benchmark.create",
+        outcome="success",
+        actor_user_id=user.id,
+        target_type="benchmark_run",
+        request_id=getattr(request.state, "request_id", None),
+        details={
+            "provider": payload.provider,
+            "model": payload.model,
+            "dry_run": payload.dry_run,
+            "dataset_version": payload.dataset_version,
+        },
+    )
 
     service = BenchmarkService(db)
     run = await service.create_run(
@@ -157,6 +177,7 @@ async def get_benchmark_cases(run_id: str, db: AsyncSession = Depends(get_db), _
 @router.post("/benchmark-runs/{run_id}/resume", status_code=status.HTTP_202_ACCEPTED)
 async def resume_benchmark_run(
     run_id: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_roles(*EDITOR_ROLES)),
 ) -> dict[str, Any]:
@@ -164,16 +185,46 @@ async def resume_benchmark_run(
     run = await service.get_run(run_id)
     if user.role != "admin" and not run.dry_run:
         raise AuthorizationError("Only administrators may resume live provider benchmarks.")
+
+    await AuditService(db).record(
+        action="benchmark.resume",
+        outcome="success",
+        actor_user_id=user.id,
+        target_type="benchmark_run",
+        target_id=run.run_id,
+        request_id=getattr(request.state, "request_id", None),
+        details={"dry_run": run.dry_run, "status_before": run.status},
+    )
+    if run.status in {"completed", "failed", "cancelled"}:
+        await db.commit()
+        return {"run_id": run.run_id, "status": run.status, "dry_run": run.dry_run, "resumed": True}
+
     run = await service.resume_run(run_id)
     return {"run_id": run.run_id, "status": run.status, "dry_run": run.dry_run, "resumed": True}
 
 
 @router.post("/benchmark-runs/{run_id}/cancel", status_code=status.HTTP_202_ACCEPTED)
-async def cancel_benchmark_run(run_id: str, payload: BenchmarkRunCancelRequest | None = None, db: AsyncSession = Depends(get_db), _: User = Depends(require_roles(*ADMIN_ROLES))) -> dict[str, Any]:
+async def cancel_benchmark_run(
+    run_id: str,
+    request: Request,
+    payload: BenchmarkRunCancelRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+    actor: User = Depends(require_roles(*ADMIN_ROLES)),
+) -> dict[str, Any]:
     service = BenchmarkService(db)
     run = await service.get_run(run_id)
     if run.status in {"completed", "failed", "cancelled"}:
         raise ConflictError("Cannot cancel a terminal benchmark run.", details={"run_id": run_id, "status": run.status})
+
+    await AuditService(db).record(
+        action="benchmark.cancel",
+        outcome="success",
+        actor_user_id=actor.id,
+        target_type="benchmark_run",
+        target_id=run.run_id,
+        request_id=getattr(request.state, "request_id", None),
+        details={"dry_run": run.dry_run, "status_before": run.status, "reason_provided": bool(payload and payload.reason)},
+    )
     run = await service.cancel_run(run_id, reason=(payload.reason if payload else None))
     return {"run_id": run.run_id, "status": run.status, "cancelled": True}
 
