@@ -7,3 +7,7 @@ export async function login(email: string, password: string): Promise<AccessToke
   return response;
 }
 
+export function clearAuthToken(): void {
+  setAccessToken(null);
+}
+
