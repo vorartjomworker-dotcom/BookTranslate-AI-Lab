@@ -12,9 +12,10 @@ from app.core.pagination import normalize_pagination
 
 
 @pytest.fixture
-def client() -> TestClient:
+def client(admin_client: TestClient) -> TestClient:
     app.dependency_overrides[get_db] = lambda: object()
     with TestClient(app) as test_client:
+        test_client.headers.update(admin_client.headers)
         yield test_client
     app.dependency_overrides.clear()
 

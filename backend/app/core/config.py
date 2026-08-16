@@ -76,10 +76,6 @@ class Settings(BaseSettings):
     jwt_expire_minutes: int = 15
     cors_allowed_origins: list[str] = ["http://localhost:3000", "http://localhost:3001"]
 
-    @property
-    def auth_secret_key(self) -> str:
-        return self.jwt_secret
-
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @field_validator("default_ai_provider")

@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.benchmarks.dataset import TECHNICAL_TRANSLATION_DATASET_CHECKSUM, TECHNICAL_TRANSLATION_DATASET_VERSION, load_dataset
 from app.benchmarks.service import BenchmarkService
-from app.core.exceptions import ConflictError, ValidationError
+from app.core.exceptions import AuthorizationError, ConflictError, ValidationError
 from app.core.pagination import MAX_PAGE_SIZE, build_paginated_response, normalize_pagination
 from app.core.roles import ADMIN_ROLES, EDITOR_ROLES
 from app.dependencies.auth import get_current_user, require_roles
@@ -45,7 +45,7 @@ class BenchmarkRunCancelRequest(BaseModel):
 @router.post("/benchmark-runs", status_code=status.HTTP_202_ACCEPTED)
 async def create_benchmark_run(payload: BenchmarkRunCreateRequest, db: AsyncSession = Depends(get_db), user: User = Depends(require_roles(*EDITOR_ROLES))) -> dict[str, Any]:
     if user.role != "admin" and (not payload.dry_run or payload.confirm_live_provider):
-        raise ValidationError("Only administrators may run live provider benchmarks.")
+        raise AuthorizationError("Only administrators may run live provider benchmarks.")
     dataset = load_dataset()
     if payload.dataset_name != dataset.name:
         raise ValidationError("Unsupported dataset name.", details={"dataset_name": payload.dataset_name, "expected": dataset.name})

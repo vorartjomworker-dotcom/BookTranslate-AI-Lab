@@ -37,20 +37,20 @@ async def test_users_table_exists_and_enforces_unique_email_and_role_constraint(
 
             await session.execute(
                 text(
-                    "INSERT INTO users (email, password_hash, role, is_active) "
-                    "VALUES (:email, :password_hash, :role, :is_active)"
+                    "INSERT INTO users (email, normalized_email, password_hash, role, is_active) "
+                    "VALUES (:email, :normalized_email, :password_hash, :role, :is_active)"
                 ),
-                {"email": "pg-user@example.com", "password_hash": hash_password("some-password-1"), "role": "viewer", "is_active": True},
+                {"email": "pg-user@example.com", "normalized_email": "pg-user@example.com", "password_hash": hash_password("some-password-1"), "role": "viewer", "is_active": True},
             )
             await session.commit()
 
             with pytest.raises(Exception):
                 await session.execute(
                     text(
-                        "INSERT INTO users (email, password_hash, role, is_active) "
-                        "VALUES (:email, :password_hash, :role, :is_active)"
+                        "INSERT INTO users (email, normalized_email, password_hash, role, is_active) "
+                        "VALUES (:email, :normalized_email, :password_hash, :role, :is_active)"
                     ),
-                    {"email": "pg-user@example.com", "password_hash": "x", "role": "viewer", "is_active": True},
+                    {"email": "pg-other@example.com", "normalized_email": "pg-user@example.com", "password_hash": "x", "role": "viewer", "is_active": True},
                 )
                 await session.commit()
             await session.rollback()
@@ -58,10 +58,10 @@ async def test_users_table_exists_and_enforces_unique_email_and_role_constraint(
             with pytest.raises(Exception):
                 await session.execute(
                     text(
-                        "INSERT INTO users (email, password_hash, role, is_active) "
-                        "VALUES (:email, :password_hash, :role, :is_active)"
+                        "INSERT INTO users (email, normalized_email, password_hash, role, is_active) "
+                        "VALUES (:email, :normalized_email, :password_hash, :role, :is_active)"
                     ),
-                    {"email": "pg-user-2@example.com", "password_hash": "x", "role": "not-a-role", "is_active": True},
+                    {"email": "pg-user-2@example.com", "normalized_email": "pg-user-2@example.com", "password_hash": "x", "role": "not-a-role", "is_active": True},
                 )
                 await session.commit()
             await session.rollback()

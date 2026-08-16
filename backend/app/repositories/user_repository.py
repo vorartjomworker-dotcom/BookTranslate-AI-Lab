@@ -4,6 +4,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import User
+from app.core.security import normalize_email
 
 
 class UserRepository:
@@ -26,7 +27,8 @@ class UserRepository:
         return int(result.scalar_one() or 0)
 
     async def create(self, *, email: str, password_hash: str, role: str) -> User:
-        user = User(email=email, normalized_email=email, password_hash=password_hash, role=role, is_active=True)
+        normalized_email = normalize_email(email)
+        user = User(email=email, normalized_email=normalized_email, password_hash=password_hash, role=role, is_active=True)
         self.session.add(user)
         await self.session.flush()
         await self.session.refresh(user)

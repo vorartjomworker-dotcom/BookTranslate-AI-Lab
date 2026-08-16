@@ -62,8 +62,10 @@ class _FakeSession:
 
 
 @pytest.fixture
-def client() -> TestClient:
-    return TestClient(app)
+def client(editor_client: TestClient) -> TestClient:
+    test_client = TestClient(app)
+    test_client.headers.update(editor_client.headers)
+    return test_client
 
 
 @pytest.fixture

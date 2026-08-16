@@ -188,19 +188,17 @@ The API and workspace UI require an authenticated user. Passwords are hashed wit
 | `editor` | ✅ | ✅ | ✅ | ❌ | ❌ |
 | `admin` | ✅ | ✅ | ✅ | ✅ | ✅ |
 
-`/health` and `/` remain unauthenticated so container/orchestrator health checks keep working. `POST /api/v1/auth/login`, `POST /api/v1/auth/refresh`, and `POST /api/v1/auth/bootstrap-admin` are public by design (bootstrap additionally requires the `AUTH_BOOTSTRAP_TOKEN` header/setting and only works while the `users` table is empty).
+`/health` and `/` remain unauthenticated so container/orchestrator health checks keep working. `POST /api/v1/auth/login` is the only public API authentication endpoint. `/api/v1/auth/me` requires a valid access token.
 
 ### Bootstrap flow
-1. Set `AUTH_BOOTSTRAP_TOKEN` to a random value in the environment.
-2. `POST /api/v1/auth/bootstrap-admin` with `{"email": "...", "password": "..."}` and header `X-Bootstrap-Token: <value>` — creates the first `admin` user. Fails with `409` once any user already exists.
-3. Log in normally afterwards via `POST /api/v1/auth/login`.
+Run `python -m app.auth.bootstrap_admin` with `ADMIN_EMAIL` and `ADMIN_PASSWORD` environment variables, or provide them interactively. Bootstrap refuses to run when any user already exists and never exposes a public HTTP endpoint.
 
 ### Required environment variables
-See `.env.example`: `AUTH_SECRET_KEY`, `AUTH_ACCESS_TOKEN_EXPIRES_MINUTES`, `AUTH_REFRESH_TOKEN_EXPIRES_DAYS`, `AUTH_BOOTSTRAP_TOKEN`, `AUTH_COOKIE_SECURE`, `AUTH_COOKIE_SAMESITE`.
+See `.env.example`: `JWT_SECRET`, `JWT_ALGORITHM`, `JWT_EXPIRE_MINUTES`, `CORS_ALLOWED_ORIGINS`, `ADMIN_EMAIL`, and `ADMIN_PASSWORD`.
 
 ### Security assumptions & known limitations
-- Refresh tokens are stateless JWTs; there is currently **no server-side revocation list**, so a compromised refresh token remains valid until it expires. Adding a revocation store is a follow-up.
-- `AUTH_SECRET_KEY` must be set to a long random value outside local development; the shipped default is intentionally insecure and only for local use.
+- Access tokens are short-lived JWTs and are held only in frontend memory. Logout clears the in-memory token; there is no refresh-token flow in this PR.
+- `JWT_SECRET` must be set to a long random value outside local development; no production secret is shipped.
 - Role checks are enforced server-side on every mutating endpoint; the frontend only hides/disables controls for UX and must never be relied on as the security boundary.
 - This is an advanced MVP: rate limiting on login, account lockout, password reset flow, audit logging, and multi-tenant isolation are out of scope for this PR.
 

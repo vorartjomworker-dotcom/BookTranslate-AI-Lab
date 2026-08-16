@@ -121,7 +121,7 @@ def test_me_with_expired_token_returns_401(auth_client, async_session_factory) -
     user = asyncio.run(_create_user(async_session_factory, email="expired@example.com", password="some-password-1", role="viewer"))
     now = datetime.now(timezone.utc)
     expired_payload = {"sub": str(user.id), "token_type": "access", "iat": int((now - timedelta(hours=1)).timestamp()), "exp": int((now - timedelta(minutes=1)).timestamp())}
-    expired_token = jwt.encode(expired_payload, settings.auth_secret_key, algorithm="HS256")
+    expired_token = jwt.encode(expired_payload, settings.jwt_secret, algorithm="HS256")
 
     response = auth_client.get("/api/v1/auth/me", headers=_auth_header(expired_token))
     assert response.status_code == 401
@@ -227,7 +227,7 @@ def test_editor_cannot_delete_segment(auth_client, async_session_factory) -> Non
     assert response.status_code == 403
 
 
-def test_editor_cannot_create_benchmark_run(auth_client, async_session_factory) -> None:
+def test_editor_can_create_dry_run_benchmark(auth_client, async_session_factory) -> None:
     import asyncio
 
     editor = asyncio.run(_create_user(async_session_factory, email="editor3@example.com", password="some-password-1", role="editor"))
@@ -237,7 +237,21 @@ def test_editor_cannot_create_benchmark_run(auth_client, async_session_factory) 
         json={"provider": "openai", "model": "gpt-4o"},
         headers=_auth_header(token),
     )
+    assert response.status_code == 202, response.text
+
+
+def test_editor_cannot_create_live_benchmark(auth_client, async_session_factory) -> None:
+    import asyncio
+
+    editor = asyncio.run(_create_user(async_session_factory, email="editor-live@example.com", password="some-password-1", role="editor"))
+    token = create_access_token(editor.id)
+    response = auth_client.post(
+        "/api/v1/benchmark-runs",
+        json={"provider": "openai", "model": "gpt-4o", "dry_run": False, "confirm_live_provider": True},
+        headers=_auth_header(token),
+    )
     assert response.status_code == 403
+    assert response.json()["code"] == "forbidden"
 
 
 def test_admin_can_delete_segment(auth_client, async_session_factory) -> None:
@@ -276,5 +290,5 @@ def test_login_response_never_leaks_password_hash_or_secret(auth_client, async_s
     response = auth_client.post("/api/v1/auth/login", json={"email": "redact@example.com", "password": "some-password-1"})
     body_text = response.text
     assert user.password_hash not in body_text
-    assert settings.auth_secret_key not in body_text
+    assert settings.jwt_secret not in body_text
     assert "password_hash" not in response.json()["user"]

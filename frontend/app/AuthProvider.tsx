@@ -18,7 +18,7 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
-  const [status, setStatus] = useState<'checking' | 'authenticated' | 'unauthenticated'>('checking');
+  const [status, setStatus] = useState<'checking' | 'authenticated' | 'unauthenticated'>('unauthenticated');
   const [sessionExpired, setSessionExpired] = useState(false);
   const hasSessionRef = useRef(false);
 
@@ -30,7 +30,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (hasSessionRef.current) setSessionExpired(true);
       setAccessToken(null);
     });
-    setStatus('unauthenticated');
     return () => setUnauthorizedHandler(null);
   }, []);
 
