@@ -38,6 +38,15 @@ def _auth_header(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def _assert_bearer_unauthorized(response) -> None:
+    assert response.status_code == 401, response.text
+    assert response.headers["WWW-Authenticate"] == "Bearer"
+    body = response.json()
+    assert body["code"] == "unauthorized"
+    assert body["details"] == {}
+    assert body["request_id"] == response.headers["X-Request-ID"]
+
+
 # --- Password hashing -------------------------------------------------------------------
 
 
@@ -78,6 +87,7 @@ def test_login_wrong_password_returns_401(auth_client, async_session_factory) ->
     asyncio.run(_create_user(async_session_factory, email="viewer2@example.com", password="correct-password-1", role="viewer"))
     response = auth_client.post("/api/v1/auth/login", json={"email": "viewer2@example.com", "password": "wrong-password"})
     assert response.status_code == 401
+    assert "WWW-Authenticate" not in response.headers
     assert "password" not in response.text.lower().replace("invalid email or password", "")
 
 
@@ -106,12 +116,17 @@ def test_login_inactive_user_returns_401(auth_client, async_session_factory) -> 
 
 def test_me_without_token_returns_401(auth_client) -> None:
     response = auth_client.get("/api/v1/auth/me")
-    assert response.status_code == 401
+    _assert_bearer_unauthorized(response)
+
+
+def test_me_with_malformed_authorization_header_returns_bearer_challenge(auth_client) -> None:
+    response = auth_client.get("/api/v1/auth/me", headers={"Authorization": "NotBearer credentials"})
+    _assert_bearer_unauthorized(response)
 
 
 def test_me_with_invalid_token_returns_401(auth_client) -> None:
     response = auth_client.get("/api/v1/auth/me", headers=_auth_header("not-a-real-token"))
-    assert response.status_code == 401
+    _assert_bearer_unauthorized(response)
 
 
 def test_me_with_expired_token_returns_401(auth_client, async_session_factory) -> None:
@@ -124,7 +139,7 @@ def test_me_with_expired_token_returns_401(auth_client, async_session_factory) -
     expired_token = jwt.encode(expired_payload, settings.jwt_secret, algorithm="HS256")
 
     response = auth_client.get("/api/v1/auth/me", headers=_auth_header(expired_token))
-    assert response.status_code == 401
+    _assert_bearer_unauthorized(response)
 
 
 def test_me_rejects_token_with_wrong_algorithm(auth_client, async_session_factory) -> None:
@@ -133,7 +148,7 @@ def test_me_rejects_token_with_wrong_algorithm(auth_client, async_session_factor
     user = asyncio.run(_create_user(async_session_factory, email="algcheck@example.com", password="some-password-1", role="viewer"))
     forged = jwt.encode({"sub": str(user.id), "token_type": "access"}, "guessed-secret", algorithm="HS256")
     response = auth_client.get("/api/v1/auth/me", headers=_auth_header(forged))
-    assert response.status_code == 401
+    _assert_bearer_unauthorized(response)
 
 
 def test_me_returns_current_user(auth_client, async_session_factory) -> None:
@@ -153,7 +168,7 @@ def test_inactive_user_token_rejected(auth_client, async_session_factory) -> Non
     user = asyncio.run(_create_user(async_session_factory, email="deactivated@example.com", password="some-password-1", role="viewer", is_active=False))
     token = create_access_token(user.id)
     response = auth_client.get("/api/v1/auth/me", headers=_auth_header(token))
-    assert response.status_code in (401, 403)
+    _assert_bearer_unauthorized(response)
 
 
 # --- RBAC on real endpoints --------------------------------------------------------------

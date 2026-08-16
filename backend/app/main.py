@@ -18,6 +18,17 @@ from app.db import check_database
 from app.redis_client import check_redis
 
 
+_SERIALIZER_MANAGED_HEADERS = {"content-length", "content-type"}
+
+
+def _exception_response_headers(headers: dict[str, str] | None) -> dict[str, str]:
+    return {
+        name: value
+        for name, value in (headers or {}).items()
+        if name.lower() not in _SERIALIZER_MANAGED_HEADERS
+    }
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     yield
@@ -87,7 +98,11 @@ async def conflict_exception_handler(request: Request, exc: ConflictError) -> JS
 @app.exception_handler(APIError)
 async def api_error_handler(request: Request, exc: APIError) -> JSONResponse:
     request_id = getattr(request.state, "request_id", uuid4().hex)
-    return JSONResponse(status_code=exc.http_status, content=exc.to_dict(request_id))
+    return JSONResponse(
+        status_code=exc.http_status,
+        content=exc.to_dict(request_id),
+        headers=_exception_response_headers(exc.headers),
+    )
 
 
 @app.exception_handler(PayloadTooLargeError)
@@ -141,6 +156,7 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException) 
             "details": {},
             "request_id": request_id,
         },
+        headers=_exception_response_headers(dict(exc.headers or {})),
     )
 
 

@@ -1,10 +1,39 @@
 """Tests for main application endpoints."""
 
+import asyncio
 import pytest
 from unittest.mock import patch, AsyncMock
 from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.requests import Request
 
-from app.main import app
+from app.main import app, http_exception_handler
+
+
+def test_http_exception_handler_preserves_starlette_allow_header(client) -> None:
+    response = client.post("/health/live")
+
+    assert response.status_code == 405
+    assert response.headers["Allow"] == "GET"
+    body = response.json()
+    assert body["code"] == "http_error"
+    assert body["request_id"] == response.headers["X-Request-ID"]
+
+
+def test_http_exception_handler_preserves_custom_headers_without_overriding_json_content_type() -> None:
+    request = Request({"type": "http", "method": "GET", "path": "/", "headers": [], "state": {"request_id": "test-request"}})
+    exception = StarletteHTTPException(
+        status_code=429,
+        detail="Rate limited.",
+        headers={"Retry-After": "30", "Location": "/retry", "Content-Type": "text/plain"},
+    )
+
+    response = asyncio.run(http_exception_handler(request, exception))
+
+    assert response.headers["Retry-After"] == "30"
+    assert response.headers["Location"] == "/retry"
+    assert response.headers["content-type"] == "application/json"
+    assert response.body == b'{"code":"http_error","message":"Rate limited.","details":{},"request_id":"test-request"}'
 
 
 @pytest.fixture

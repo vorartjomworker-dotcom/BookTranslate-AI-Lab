@@ -17,9 +17,12 @@ async def get_current_user(
     db: AsyncSession = Depends(get_db),
 ) -> User:
     if credentials is None or not credentials.credentials:
-        raise AuthenticationError("Authentication required.")
+        raise AuthenticationError("Authentication required.", bearer_challenge=True)
     service = AuthService(db)
-    return await service.get_user_from_access_token(credentials.credentials)
+    try:
+        return await service.get_user_from_access_token(credentials.credentials)
+    except AuthenticationError as exc:
+        raise AuthenticationError("Invalid or expired token.", bearer_challenge=True) from exc
 
 
 def require_roles(*allowed_roles: str):

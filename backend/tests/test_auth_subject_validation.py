@@ -41,3 +41,4 @@ def test_me_rejects_signed_token_with_invalid_subject_as_401(auth_client, subjec
     assert body["code"] == "unauthorized"
     assert body["message"] == "Invalid or expired token."
     assert body.get("request_id")
+    assert response.headers["WWW-Authenticate"] == "Bearer"
