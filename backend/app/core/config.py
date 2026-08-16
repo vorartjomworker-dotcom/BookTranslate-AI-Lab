@@ -6,6 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     app_name: str = "BookTranslate AI Lab"
+    log_level: str = "INFO"
     database_url: str = "postgresql+asyncpg://booktranslate:booktranslate@postgres:5432/booktranslate"
     redis_url: str = "redis://redis:6379/0"
 
@@ -77,6 +78,15 @@ class Settings(BaseSettings):
     cors_allowed_origins: list[str] = ["http://localhost:3000", "http://localhost:3001"]
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    @field_validator("log_level")
+    @classmethod
+    def validate_log_level(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        allowed = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+        if normalized not in allowed:
+            raise ValueError("log_level must be one of: DEBUG, INFO, WARNING, ERROR, CRITICAL")
+        return normalized
 
     @field_validator("default_ai_provider")
     @classmethod
