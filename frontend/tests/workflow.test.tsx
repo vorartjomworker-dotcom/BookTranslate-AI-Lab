@@ -124,8 +124,8 @@ it('uses the safe translation endpoint for manual  edits and keeps a draft on sa
   vi.stubGlobal('fetch', fetchMock);
 
   render(<AuthProvider><HomePage /></AuthProvider>);
-  await screen.findByText('Distributed Systems');
   await signIn();
+  await screen.findByText('Distributed Systems');
   fireEvent.click(screen.getByText('Distributed Systems'));
   await screen.findByText('Intro');
   fireEvent.click(screen.getByText('Intro'));
@@ -168,8 +168,8 @@ it('ignores a stale save response after the active segment changes', async () =>
   vi.spyOn(window, 'confirm').mockReturnValue(true);
 
   render(<AuthProvider><HomePage /></AuthProvider>);
-  await screen.findByText('Distributed Systems');
   await signIn();
+  await screen.findByText('Distributed Systems');
   fireEvent.click(screen.getByText('Distributed Systems'));
   await screen.findByText('Intro');
   fireEvent.click(screen.getByText('Intro'));
@@ -216,8 +216,8 @@ it('does not leave the next section permanently busy after a save is invalidated
   vi.spyOn(window, 'confirm').mockReturnValue(true);
 
   render(<AuthProvider><HomePage /></AuthProvider>);
-  await screen.findByText('Distributed Systems');
   await signIn();
+  await screen.findByText('Distributed Systems');
   fireEvent.click(screen.getByText('Distributed Systems'));
   await screen.findByText('Intro');
   fireEvent.click(screen.getByText('Intro'));
@@ -272,8 +272,8 @@ it('refreshes the translated segment and QA report after a job completes', async
   vi.stubGlobal('fetch', fetchMock);
 
   render(<AuthProvider><HomePage /></AuthProvider>);
-  await screen.findByText('Distributed Systems');
   await signIn();
+  await screen.findByText('Distributed Systems');
   fireEvent.click(screen.getByText('Distributed Systems'));
   await screen.findByText('Intro');
   fireEvent.click(screen.getByText('Intro'));
