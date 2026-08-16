@@ -10,6 +10,10 @@ on:
       - 'backend/requirements-runtime.txt'
       - 'backend/alembic.ini'
       - 'backend/alembic/**'
+      - 'backend/app/core/config.py'
+      - 'backend/app/main.py'
+      - 'backend/app/metrics.py'
+      - 'backend/app/observability.py'
       - 'frontend/Dockerfile'
       - 'frontend/.dockerignore'
       - 'frontend/package.json'
@@ -25,6 +29,10 @@ on:
       - 'backend/requirements-runtime.txt'
       - 'backend/alembic.ini'
       - 'backend/alembic/**'
+      - 'backend/app/core/config.py'
+      - 'backend/app/main.py'
+      - 'backend/app/metrics.py'
+      - 'backend/app/observability.py'
       - 'frontend/Dockerfile'
       - 'frontend/.dockerignore'
       - 'frontend/package.json'
@@ -97,7 +105,7 @@ jobs:
         print("✓ backend healthcheck targets /health/ready")
         PY
 
-    - name: Verify migrations and Redis auth gate application services
+    - name: Verify migrations, Redis auth, and metrics configuration
       shell: bash
       run: |
         set -euo pipefail
@@ -122,6 +130,10 @@ jobs:
             redis_url = services[service_name].get("environment", {}).get("REDIS_URL", "")
             assert "REDIS_PASSWORD" in redis_url, f"{service_name} REDIS_URL must be derived from REDIS_PASSWORD"
 
+        backend_environment = services["backend"].get("environment", {})
+        assert "METRICS_ENABLED" in backend_environment, "backend must receive METRICS_ENABLED"
+        assert "METRICS_BEARER_TOKEN" in backend_environment, "backend must receive METRICS_BEARER_TOKEN"
+
         redis_service = services["redis"]
         assert "REDIS_PASSWORD" in redis_service.get("environment", {}), "Redis service must receive REDIS_PASSWORD"
         redis_command = " ".join(redis_service.get("command", []))
@@ -130,7 +142,7 @@ jobs:
         frontend_build_args = services["frontend"].get("build", {}).get("args", {})
         assert "NEXT_PUBLIC_API_URL" in frontend_build_args, "frontend must receive NEXT_PUBLIC_API_URL at build time"
 
-        print("✓ migrations gate backend/worker; Redis authentication is required; frontend API URL is a build argument")
+        print("✓ migrations gate backend/worker; Redis authentication and protected metrics configuration are wired")
         PY
 
     - name: Verify Docker build contexts exclude local secrets and caches
@@ -152,6 +164,8 @@ jobs:
         JWT_SECRET: test-only-secret-for-clean-compose-smoke-at-least-32-characters-long
         POSTGRES_PASSWORD: test-only-postgres-password-for-clean-compose-smoke
         REDIS_PASSWORD: test-only-redis-password-for-clean-compose-smoke
+        METRICS_ENABLED: 'true'
+        METRICS_BEARER_TOKEN: test-only-metrics-token-for-clean-compose-smoke-0123456789
       run: |
         set -euo pipefail
 
@@ -177,6 +191,20 @@ jobs:
         done
 
         cat /tmp/booktranslate-health.json
+
+        metrics_unauth_status="$(curl -sS -o /tmp/booktranslate-metrics-unauth.json -w '%{http_code}' http://localhost:8000/metrics)"
+        test "$metrics_unauth_status" = "401"
+        grep -qi 'Bearer' <(curl -sSI -H 'Authorization: invalid' http://localhost:8000/metrics || true) || true
+
+        curl -fsS \
+          -H "Authorization: Bearer $METRICS_BEARER_TOKEN" \
+          http://localhost:8000/metrics >/tmp/booktranslate-metrics.prom
+        grep -q '^# HELP booktranslate_http_requests_total ' /tmp/booktranslate-metrics.prom
+        grep -q '^# HELP booktranslate_http_request_duration_seconds ' /tmp/booktranslate-metrics.prom
+        if grep -Fq "$METRICS_BEARER_TOKEN" /tmp/booktranslate-metrics.prom; then
+          echo "metrics bearer token leaked into Prometheus output"
+          exit 1
+        fi
 
         for attempt in $(seq 1 60); do
           if curl -fsS http://localhost:3000/ >/tmp/booktranslate-frontend.html; then
@@ -232,7 +260,7 @@ jobs:
           sleep 1
         done
 
-        echo "✓ clean production stack started with authenticated Redis; stale schema produced 503; restoring head recovered readiness"
+        echo "✓ clean production stack started; metrics require a dedicated token; stale schema produced 503; restoring head recovered readiness"
 
     - name: Lint Dockerfiles
       run: |
