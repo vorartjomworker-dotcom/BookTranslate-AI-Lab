@@ -182,26 +182,36 @@ This project is a production-oriented advanced MVP / pre-production platform for
 ## Authentication & Roles
 
 ### Overview
-The API and workspace UI require an authenticated user. Passwords are hashed with **Argon2id** (via `argon2-cffi`), a memory-hard password hashing function. Authentication uses a short-lived JSON Web Token (JWT, HS256) **access token only**. The frontend keeps that access token in memory and never stores it in `localStorage`, `sessionStorage`, or an authentication cookie. Access tokens carry `sub`, `iat`, `exp`, and `token_type=access`. There is **no refresh-token endpoint, refresh cookie, or silent refresh flow** in this PR. Page reload and explicit logout clear the in-memory authentication state and require a new login; JWT-expiry reauthentication is handled explicitly by the UI.
+The API and workspace UI use local email/password authentication. Passwords are hashed with **Argon2id** (via `argon2-cffi`), a memory-hard password hashing function. Authentication uses a short-lived JSON Web Token (JWT, HS256) **access token only**. The frontend keeps that access token in memory and never stores it in `localStorage`, `sessionStorage`, or an authentication cookie. Browser API requests send a Bearer token with `credentials: 'omit'`; backend CORS uses `allow_credentials=False`. Access tokens carry `sub`, `iat`, `exp`, and `token_type=access`. There is no refresh token, refresh endpoint, refresh cookie, silent refresh flow, or authentication cookie. Page reload and explicit logout clear the in-memory authentication state and require a new login; JWT-expiry reauthentication is handled explicitly by the UI. JWT signing is HS256-only, and `JWT_SECRET` is required and must contain at least 32 characters.
 
 ### Roles
-| Role | Read (Books/Chapters/Segments/Jobs/Quality/Benchmarks) | Create/update Books/Chapters/Segments, edit translations, upload | Run translation jobs / QA checks | Delete Books/Chapters/Segments | Benchmark create/resume/cancel |
-|---|---|---|---|---|---|
-| `viewer` | ✅ | ❌ | ❌ | ❌ | ❌ |
-| `editor` | ✅ | ✅ | ✅ | ❌ | ❌ |
-| `admin` | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Capability | `viewer` | `editor` | `admin` |
+|---|---:|---:|---:|
+| Read books, chapters, segments, translation jobs, QA, and benchmarks | Yes | Yes | Yes |
+| Upload documents and create/update books, chapters, and segments | No | Yes | Yes |
+| Edit translations, run translation jobs, and run QA checks | No | Yes | Yes |
+| Delete protected resources | No | No | Yes |
+| Create a dry-run benchmark | No | Yes | Yes |
+| Resume a persisted dry-run benchmark | No | Yes | Yes |
+| Create or resume a live-provider benchmark | No | No | Yes |
+| Cancel a benchmark | No | No | Yes |
+| Manage users, roles, and active state | No | No | Yes |
 
-`/health`, `/health/live`, `/health/ready`, and `/` remain unauthenticated so container/orchestrator health checks keep working. `POST /api/v1/auth/login` is the only public API authentication endpoint. `/api/v1/auth/me` requires a valid access token.
+`viewer` is a read-only role for protected business resources. `editor` includes viewer permissions plus non-destructive editing, upload, translation-job, QA, and dry-run benchmark operations. `admin` includes editor permissions plus destructive administration, user management, and live benchmark operations. In the frontend, Resume is hidden for viewers, limited to persisted `dry_run === true` runs for editors, and available for both dry-run and live runs for admins; Cancel is admin-only. Server-side role checks remain the security boundary.
+
+The public endpoints are `/`, `/health`, `/health/live`, `/health/ready`, and `POST /api/v1/auth/login`. `/health/live` is process liveness and does not depend on PostgreSQL or Redis. `/health/ready` returns `200` only when PostgreSQL and Redis are available, otherwise `503`; it is the Docker Compose backend healthcheck. Legacy `/health` remains a compatibility endpoint that returns `200` with `ok` or `degraded` status and dependency booleans. Protected business endpoints under `/api/v1/**`, including `/api/v1/auth/me`, require a valid Bearer access token.
 
 ### Bootstrap flow
-Run `python -m app.auth.bootstrap_admin` with `ADMIN_EMAIL` and `ADMIN_PASSWORD` environment variables, or provide them interactively. Bootstrap refuses to run when any user already exists and never exposes a public HTTP endpoint.
+Run `python -m app.auth.bootstrap_admin` with `ADMIN_EMAIL` and `ADMIN_PASSWORD` environment variables, or provide them interactively at the CLI prompt. This is the only first-administrator and recovery path; there is no public bootstrap HTTP endpoint. Bootstrap succeeds when there are zero active administrators, including when viewer/editor users or inactive administrators already exist. It refuses when at least one active administrator exists. PostgreSQL transaction-scoped serialization ensures concurrent bootstrap invocations cannot create two active administrators.
+
+The ordinary admin API preserves the last-active-admin invariant: it cannot deactivate or demote the last active administrator. Recovery uses the CLI only after the active-administrator count reaches zero.
 
 ### Required environment variables
 See `.env.example`: `JWT_SECRET`, `JWT_ALGORITHM`, `JWT_EXPIRE_MINUTES`, `CORS_ALLOWED_ORIGINS`, `ADMIN_EMAIL`, and `ADMIN_PASSWORD`.
 
 ### Security assumptions & known limitations
 - Access tokens are short-lived JWTs and are held only in frontend memory. Logout clears the in-memory token; there is no refresh-token flow in this PR.
-- `JWT_SECRET` must be set to a long random value outside local development; no production secret is shipped.
+- `JWT_SECRET` is mandatory and must be at least 32 characters; no production secret is shipped. Only HS256 JWT signing is accepted.
 - Role checks are enforced server-side on every mutating endpoint; the frontend only hides/disables controls for UX and must never be relied on as the security boundary.
 - This is an advanced MVP: rate limiting on login, account lockout, password reset flow, audit logging, and multi-tenant isolation are out of scope for this PR.
 
