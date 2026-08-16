@@ -15,19 +15,38 @@ from app.schemas.user import UserCreate, UserRead, UserUpdate
 
 router = APIRouter(prefix="/api/v1/admin/users", tags=["admin"])
 
-# The DB unique index backing `users.normalized_email` is the source of truth for
-# duplicate detection; the pre-check in `create_user` is only a UX/perf optimization
-# and cannot prevent a TOCTOU race between two concurrent requests for the same email.
+# The database uniqueness constraints are the source of truth for duplicate
+# detection. The SELECT pre-check in `create_user` is only a UX/performance
+# optimization and cannot prevent a TOCTOU race between concurrent requests.
+# `email` and `normalized_email` are both unique in migration 006, so either
+# index may be the first constraint PostgreSQL reports for a duplicate user.
 _DUPLICATE_EMAIL_SQLSTATE = "23505"  # PostgreSQL unique_violation
-_DUPLICATE_EMAIL_CONSTRAINT = "ix_users_normalized_email"
+_DUPLICATE_EMAIL_CONSTRAINTS = frozenset({"ix_users_email", "ix_users_normalized_email"})
 
 
 def _is_duplicate_user_email_integrity_error(exc: IntegrityError) -> bool:
-    orig = exc.orig
-    return (
-        getattr(orig, "sqlstate", None) == _DUPLICATE_EMAIL_SQLSTATE
-        and getattr(orig, "constraint_name", None) == _DUPLICATE_EMAIL_CONSTRAINT
-    )
+    """Return True only for PostgreSQL uniqueness violations on user email indexes.
+
+    SQLAlchemy's asyncpg adapter can expose SQLSTATE on its translated DBAPI
+    exception while asyncpg's original exception (available through the cause
+    chain) carries the structured constraint name. Walk that exception chain so
+    classification remains structural and does not depend on parsing error text.
+    """
+
+    current: object | None = exc.orig
+    seen: set[int] = set()
+    sqlstate: str | None = None
+    constraint_name: str | None = None
+
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        sqlstate = sqlstate or getattr(current, "sqlstate", None)
+        constraint_name = constraint_name or getattr(current, "constraint_name", None)
+        if sqlstate is not None and constraint_name is not None:
+            break
+        current = getattr(current, "__cause__", None) or getattr(current, "__context__", None)
+
+    return sqlstate == _DUPLICATE_EMAIL_SQLSTATE and constraint_name in _DUPLICATE_EMAIL_CONSTRAINTS
 
 
 @router.get("", response_model=list[UserRead])
