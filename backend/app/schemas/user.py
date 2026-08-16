@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic_core import PydanticCustomError
 
 
 class UserRead(BaseModel):
@@ -47,7 +48,10 @@ class UserUpdate(BaseModel):
     @classmethod
     def reject_explicit_null(cls, value):
         if value is None:
-            raise ValueError("Field may be omitted but must not be null when provided.")
+            raise PydanticCustomError(
+                "null_not_allowed",
+                "Field may be omitted but must not be null when provided.",
+            )
         return value
 
     model_config = ConfigDict(extra="forbid")
