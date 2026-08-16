@@ -21,6 +21,13 @@ function createDeferredResponse() {
 const book: Book = { id: 1, title: 'Distributed Systems', author: 'A. Writer', description: null, file_path: 'book.epub', file_type: 'epub', language: 'en', status: 'uploaded' };
 const failedJob: TranslationJob = { id: 2, segment_id: 1, provider: 'openai', model: 'gpt-4o', status: 'failed', attempt: 3, max_attempts: 3, retry_of_id: null, error_code: 'provider_unavailable_error', error_message: 'hidden', created_at: null, queued_at: null, started_at: null, completed_at: null, failed_at: null, request_id: 'req-1' };
 
+async function signIn() {
+  await screen.findByRole('heading', { name: 'Sign in' });
+  fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'editor@example.com' } });
+  fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'correct-password' } });
+  fireEvent.click(screen.getByRole('button', { name: /sign in/i }));
+}
+
 it('renders a stable book list label', () => expect(bookRowLabel(book)).toBe('Distributed Systems - A. Writer - EN'));
 it('validates only EPUB/DOCX extension and size', () => { expect(validateUpload({ name: 'book.exe', size: 10 })).toContain('EPUB'); expect(validateUpload({ name: 'book.pdf', size: 10 })).toContain('EPUB'); expect(validateUpload({ name: 'book.epub', size: 26 * 1024 * 1024 })).toContain('25 MB'); expect(validateUpload({ name: 'book.epub', size: 10 })).toBeNull(); });
 it('shows retry only for failed jobs', () => { expect(canRetryJob('failed')).toBe(true); expect(canRetryJob('running')).toBe(false); expect(failedJobMessage(failedJob)).toContain('failure'); });
@@ -102,7 +109,7 @@ it('uses the safe translation endpoint for manual  edits and keeps a draft on sa
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method || 'GET';
-    if (url.endsWith('/api/v1/auth/refresh') && method === 'POST') return json({ access_token: 'test-access-token', token_type: 'bearer', expires_in: 900, user: { id: 1, email: 'editor@example.com', role: 'editor', is_active: true, created_at: '2026-01-01T00:00:00Z' } });
+    if (url.endsWith('/api/v1/auth/login') && method === 'POST') return json({ access_token: 'test-access-token', token_type: 'bearer', expires_in: 900, user: { id: 1, email: 'editor@example.com', role: 'editor', is_active: true, created_at: '2026-01-01T00:00:00Z' } });
     if (url.endsWith('/api/v1/books?page=1&page_size=50')) return json({ items: [book] });
     if (url.endsWith('/api/v1/benchmark-runs?page=1&page_size=50')) return json({ items: [] });
     if (url.endsWith('/api/v1/books/1')) return json(book);
@@ -118,6 +125,7 @@ it('uses the safe translation endpoint for manual  edits and keeps a draft on sa
 
   render(<AuthProvider><HomePage /></AuthProvider>);
   await screen.findByText('Distributed Systems');
+  await signIn();
   fireEvent.click(screen.getByText('Distributed Systems'));
   await screen.findByText('Intro');
   fireEvent.click(screen.getByText('Intro'));
@@ -141,7 +149,7 @@ it('ignores a stale save response after the active segment changes', async () =>
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method || 'GET';
-    if (url.endsWith('/api/v1/auth/refresh') && method === 'POST') return json({ access_token: 'test-access-token', token_type: 'bearer', expires_in: 900, user: { id: 1, email: 'editor@example.com', role: 'editor', is_active: true, created_at: '2026-01-01T00:00:00Z' } });
+    if (url.endsWith('/api/v1/auth/login') && method === 'POST') return json({ access_token: 'test-access-token', token_type: 'bearer', expires_in: 900, user: { id: 1, email: 'editor@example.com', role: 'editor', is_active: true, created_at: '2026-01-01T00:00:00Z' } });
     if (url.endsWith('/api/v1/books?page=1&page_size=50')) return json({ items: [book] });
     if (url.endsWith('/api/v1/benchmark-runs?page=1&page_size=50')) return json({ items: [] });
     if (url.endsWith('/api/v1/books/1')) return json(book);
@@ -161,6 +169,7 @@ it('ignores a stale save response after the active segment changes', async () =>
 
   render(<AuthProvider><HomePage /></AuthProvider>);
   await screen.findByText('Distributed Systems');
+  await signIn();
   fireEvent.click(screen.getByText('Distributed Systems'));
   await screen.findByText('Intro');
   fireEvent.click(screen.getByText('Intro'));
@@ -191,7 +200,7 @@ it('does not leave the next section permanently busy after a save is invalidated
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method || 'GET';
-    if (url.endsWith('/api/v1/auth/refresh') && method === 'POST') return json({ access_token: 'test-access-token', token_type: 'bearer', expires_in: 900, user: { id: 1, email: 'editor@example.com', role: 'editor', is_active: true, created_at: '2026-01-01T00:00:00Z' } });
+    if (url.endsWith('/api/v1/auth/login') && method === 'POST') return json({ access_token: 'test-access-token', token_type: 'bearer', expires_in: 900, user: { id: 1, email: 'editor@example.com', role: 'editor', is_active: true, created_at: '2026-01-01T00:00:00Z' } });
     if (url.endsWith('/api/v1/books?page=1&page_size=50')) return json({ items: [book] });
     if (url.endsWith('/api/v1/benchmark-runs?page=1&page_size=50')) return json({ items: [] });
     if (url.endsWith('/api/v1/books/1')) return json(book);
@@ -208,6 +217,7 @@ it('does not leave the next section permanently busy after a save is invalidated
 
   render(<AuthProvider><HomePage /></AuthProvider>);
   await screen.findByText('Distributed Systems');
+  await signIn();
   fireEvent.click(screen.getByText('Distributed Systems'));
   await screen.findByText('Intro');
   fireEvent.click(screen.getByText('Intro'));
@@ -241,7 +251,7 @@ it('refreshes the translated segment and QA report after a job completes', async
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method || 'GET';
-    if (url.endsWith('/api/v1/auth/refresh') && method === 'POST') return json({ access_token: 'test-access-token', token_type: 'bearer', expires_in: 900, user: { id: 1, email: 'editor@example.com', role: 'editor', is_active: true, created_at: '2026-01-01T00:00:00Z' } });
+    if (url.endsWith('/api/v1/auth/login') && method === 'POST') return json({ access_token: 'test-access-token', token_type: 'bearer', expires_in: 900, user: { id: 1, email: 'editor@example.com', role: 'editor', is_active: true, created_at: '2026-01-01T00:00:00Z' } });
     if (url.endsWith('/api/v1/books?page=1&page_size=50')) return json({ items: [book] });
     if (url.endsWith('/api/v1/benchmark-runs?page=1&page_size=50')) return json({ items: [] });
     if (url.endsWith('/api/v1/books/1/chapters?page=1&page_size=50')) return json({ items: [chapter] });
@@ -263,6 +273,7 @@ it('refreshes the translated segment and QA report after a job completes', async
 
   render(<AuthProvider><HomePage /></AuthProvider>);
   await screen.findByText('Distributed Systems');
+  await signIn();
   fireEvent.click(screen.getByText('Distributed Systems'));
   await screen.findByText('Intro');
   fireEvent.click(screen.getByText('Intro'));

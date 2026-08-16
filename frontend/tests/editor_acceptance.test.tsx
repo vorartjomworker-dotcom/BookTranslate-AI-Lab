@@ -46,6 +46,10 @@ function json(value: unknown, status = 200) {
 }
 
 async function openEditor() {
+  await screen.findByRole('heading', { name: 'Sign in' });
+  fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'editor@example.com' } });
+  fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'correct-password' } });
+  fireEvent.click(screen.getByRole('button', { name: /sign in/i }));
   await screen.findByText('Distributed Systems');
   fireEvent.click(screen.getByText('Distributed Systems'));
   await screen.findByText('Intro');
@@ -56,7 +60,7 @@ async function openEditor() {
 }
 
 function baseFetchRoutes(url: string, method: string, segment: Segment = sourceSegment): Response | null {
-  if (url.endsWith('/api/v1/auth/refresh') && method === 'POST') return json({ access_token: 'test-access-token', token_type: 'bearer', expires_in: 900, user: { id: 1, email: 'editor@example.com', role: 'editor', is_active: true, created_at: '2026-01-01T00:00:00Z' } });
+  if (url.endsWith('/api/v1/auth/login') && method === 'POST') return json({ access_token: 'test-access-token', token_type: 'bearer', expires_in: 900, user: { id: 1, email: 'editor@example.com', role: 'editor', is_active: true, created_at: '2026-01-01T00:00:00Z' } });
   if (url.endsWith('/api/v1/books?page=1&page_size=50')) return json({ items: [book] });
   if (url.endsWith('/api/v1/benchmark-runs?page=1&page_size=50')) return json({ items: [] });
   if (url.endsWith('/api/v1/books/1')) return json(book);

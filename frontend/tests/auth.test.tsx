@@ -45,6 +45,13 @@ function json(value: unknown, status = 200) {
   return new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
 }
 
+async function signIn() {
+  await screen.findByRole('heading', { name: 'Sign in' });
+  fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'editor@example.com' } });
+  fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'correct-password' } });
+  fireEvent.click(screen.getByRole('button', { name: /sign in/i }));
+}
+
 function workspaceRoutes(url: string, method: string): Response | null {
   if (url.endsWith('/api/v1/books?page=1&page_size=50')) return json({ items: [book] });
   if (url.endsWith('/api/v1/benchmark-runs?page=1&page_size=50')) return json({ items: [] });
@@ -64,7 +71,7 @@ it('shows the login screen when there is no valid session', async () => {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method || 'GET';
-    if (url.endsWith('/api/v1/auth/refresh') && method === 'POST') return json({ code: 'unauthorized', message: 'Missing refresh token.', details: {}, request_id: 'req-1' }, 401);
+    if (url.endsWith('/api/v1/auth/login') && method === 'POST') return json({ code: 'unauthorized', message: 'Missing credentials.', details: {}, request_id: 'req-1' }, 401);
     throw new Error(`Unexpected request: ${method} ${url}`);
   });
   vi.stubGlobal('fetch', fetchMock);
@@ -80,10 +87,6 @@ it('logs in successfully and reaches the workspace', async () => {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method || 'GET';
-    if (url.endsWith('/api/v1/auth/refresh') && method === 'POST') {
-      if (!loggedIn) return json({ code: 'unauthorized', message: 'Missing refresh token.', details: {}, request_id: 'req-1' }, 401);
-      return json({ access_token: 'test-token', token_type: 'bearer', expires_in: 900, user: editorUser });
-    }
     if (url.endsWith('/api/v1/auth/login') && method === 'POST') {
       loggedIn = true;
       return json({ access_token: 'test-token', token_type: 'bearer', expires_in: 900, user: editorUser });
@@ -109,7 +112,6 @@ it('shows a login error and keeps the user on the login screen', async () => {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method || 'GET';
-    if (url.endsWith('/api/v1/auth/refresh') && method === 'POST') return json({ code: 'unauthorized', message: 'Missing refresh token.', details: {}, request_id: 'req-1' }, 401);
     if (url.endsWith('/api/v1/auth/login') && method === 'POST') return json({ code: 'unauthorized', message: 'Invalid email or password.', details: {}, request_id: 'req-2' }, 401);
     throw new Error(`Unexpected request: ${method} ${url}`);
   });
@@ -130,7 +132,7 @@ it('logs out and returns to the login screen', async () => {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method || 'GET';
-    if (url.endsWith('/api/v1/auth/refresh') && method === 'POST') return json({ access_token: 'test-token', token_type: 'bearer', expires_in: 900, user: editorUser });
+    if (url.endsWith('/api/v1/auth/login') && method === 'POST') return json({ access_token: 'test-token', token_type: 'bearer', expires_in: 900, user: editorUser });
     if (url.endsWith('/api/v1/auth/logout') && method === 'POST') return new Response(null, { status: 204 });
     const workspaceResponse = workspaceRoutes(url, method);
     if (workspaceResponse) return workspaceResponse;
@@ -139,6 +141,7 @@ it('logs out and returns to the login screen', async () => {
   vi.stubGlobal('fetch', fetchMock);
 
   render(<AuthProvider><HomePage /></AuthProvider>);
+  await signIn();
   await screen.findByText('Distributed Systems');
 
   fireEvent.click(screen.getByRole('button', { name: /logout/i }));
@@ -149,7 +152,7 @@ it('hides mutation controls for a viewer role', async () => {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method || 'GET';
-    if (url.endsWith('/api/v1/auth/refresh') && method === 'POST') return json({ access_token: 'test-token', token_type: 'bearer', expires_in: 900, user: viewerUser });
+    if (url.endsWith('/api/v1/auth/login') && method === 'POST') return json({ access_token: 'test-token', token_type: 'bearer', expires_in: 900, user: viewerUser });
     const workspaceResponse = workspaceRoutes(url, method);
     if (workspaceResponse) return workspaceResponse;
     throw new Error(`Unexpected request: ${method} ${url}`);
@@ -157,6 +160,7 @@ it('hides mutation controls for a viewer role', async () => {
   vi.stubGlobal('fetch', fetchMock);
 
   render(<AuthProvider><HomePage /></AuthProvider>);
+  await signIn();
   await screen.findByText('Distributed Systems');
   fireEvent.click(screen.getByText('Distributed Systems'));
   await screen.findByText('Intro');
@@ -173,7 +177,7 @@ it('keeps the unsaved draft visible when a save fails with an expired session', 
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method || 'GET';
-    if (url.endsWith('/api/v1/auth/refresh') && method === 'POST') return json({ access_token: 'test-token', token_type: 'bearer', expires_in: 900, user: editorUser });
+    if (url.endsWith('/api/v1/auth/login') && method === 'POST') return json({ access_token: 'test-token', token_type: 'bearer', expires_in: 900, user: editorUser });
     if (url.endsWith('/api/v1/segments/21/translation') && method === 'PATCH') return json({ code: 'unauthorized', message: 'Your session has expired. Please log in again.', details: {}, request_id: 'req-expired' }, 401);
     const workspaceResponse = workspaceRoutes(url, method);
     if (workspaceResponse) return workspaceResponse;
@@ -182,6 +186,7 @@ it('keeps the unsaved draft visible when a save fails with an expired session', 
   vi.stubGlobal('fetch', fetchMock);
 
   render(<AuthProvider><HomePage /></AuthProvider>);
+  await signIn();
   await screen.findByText('Distributed Systems');
   fireEvent.click(screen.getByText('Distributed Systems'));
   await screen.findByText('Intro');
