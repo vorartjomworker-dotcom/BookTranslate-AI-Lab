@@ -33,6 +33,22 @@ def test_root_response_structure(client: TestClient) -> None:
     assert all(isinstance(v, str) for v in data.values())
 
 
+def test_cors_preflight_does_not_allow_credentials(client: TestClient) -> None:
+    """Bearer-only CORS must not advertise browser credential support."""
+    response = client.options(
+        "/api/v1/books",
+        headers={
+            "Origin": "http://localhost:3000",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "Authorization",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers.get("access-control-allow-origin") == "http://localhost:3000"
+    assert "access-control-allow-credentials" not in response.headers
+
+
 @pytest.mark.asyncio
 async def test_health_check_both_ok() -> None:
     """Test health endpoint when both database and redis are OK."""
