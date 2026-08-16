@@ -17,6 +17,9 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://booktranslate:booktranslate@postgres:5432/booktranslate}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       UPLOAD_DIR: ${UPLOAD_DIR:-/var/lib/booktranslate/uploads}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-15}
     ports:
       - "8000:8000"
     volumes:
@@ -77,6 +80,9 @@ services:
       TRANSLATION_DLQ_STREAM_NAME: ${TRANSLATION_DLQ_STREAM_NAME:-translation_jobs_dlq}
       TRANSLATION_CONSUMER_NAME: ${TRANSLATION_CONSUMER_NAME:-translator-worker-1}
       UPLOAD_DIR: ${UPLOAD_DIR:-/var/lib/booktranslate/uploads}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-15}
     volumes:
       - uploads_data:/var/lib/booktranslate/uploads
     depends_on:
