@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, JSON, String, text
+from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -12,7 +12,7 @@ from app.models.base import Base
 class AuditEvent(Base):
     __tablename__ = "audit_events"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     actor_user_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
     )
