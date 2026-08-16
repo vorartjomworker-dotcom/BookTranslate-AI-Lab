@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit import AuditService, audit_hash
 from app.auth.rate_limit import enforce_login_rate_limit
-from app.core.exceptions import APIError, AuthenticationError
+from app.core.exceptions import AccountLockedError, APIError, AuthenticationError
 from app.core.security import normalize_email
 from app.dependencies.auth import get_current_user
 from app.dependencies.db import get_db
@@ -46,6 +46,17 @@ async def login(
     service = AuthService(db)
     try:
         user = await service.authenticate(email=payload.email, password=payload.password)
+    except AccountLockedError as exc:
+        await audit.record(
+            action="auth.login",
+            outcome="failure",
+            subject_hash=subject_hash,
+            source_hash=source_hash,
+            request_id=request_id,
+            details={"http_status": exc.http_status, "reason": "account_locked"},
+        )
+        await db.commit()
+        raise
     except AuthenticationError as exc:
         await audit.record(
             action="auth.login",
