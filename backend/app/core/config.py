@@ -77,6 +77,8 @@ class Settings(BaseSettings):
     jwt_secret: str
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 15
+    login_lockout_threshold: int = 10
+    login_lockout_minutes: int = 15
     cors_allowed_origins: list[str] = ["http://localhost:3000", "http://localhost:3001"]
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
@@ -131,7 +133,13 @@ class Settings(BaseSettings):
             raise ValueError("translation_job_retry_limit must be >= 0")
         return value
 
-    @field_validator("translation_stream_block_ms", "translation_job_timeout_seconds", "translation_job_max_stale_ms")
+    @field_validator(
+        "translation_stream_block_ms",
+        "translation_job_timeout_seconds",
+        "translation_job_max_stale_ms",
+        "login_lockout_threshold",
+        "login_lockout_minutes",
+    )
     @classmethod
     def validate_positive_ints(cls, value: int, info: ValidationInfo) -> int:
         if value <= 0:
