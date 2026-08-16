@@ -54,6 +54,7 @@ jobs:
 
         unset JWT_SECRET
         export POSTGRES_PASSWORD='test-only-postgres-password-for-compose'
+        export REDIS_PASSWORD='test-only-redis-password-for-compose'
         if docker compose config >/tmp/compose-without-jwt.out 2>/tmp/compose-without-jwt.err; then
           echo "docker compose config unexpectedly succeeded without JWT_SECRET"
           exit 1
@@ -69,8 +70,16 @@ jobs:
         grep -q "POSTGRES_PASSWORD is required" /tmp/compose-without-db-password.err
 
         export POSTGRES_PASSWORD='test-only-postgres-password-for-compose'
+        unset REDIS_PASSWORD
+        if docker compose config >/tmp/compose-without-redis-password.out 2>/tmp/compose-without-redis-password.err; then
+          echo "docker compose config unexpectedly succeeded without REDIS_PASSWORD"
+          exit 1
+        fi
+        grep -q "REDIS_PASSWORD is required" /tmp/compose-without-redis-password.err
+
+        export REDIS_PASSWORD='test-only-redis-password-for-compose'
         docker compose config >/dev/null
-        echo "✓ Compose rejects missing JWT_SECRET and POSTGRES_PASSWORD and accepts explicit secrets"
+        echo "✓ Compose rejects missing JWT_SECRET, POSTGRES_PASSWORD, and REDIS_PASSWORD and accepts explicit secrets"
 
     - name: Verify backend healthcheck targets readiness endpoint
       shell: bash
@@ -88,7 +97,7 @@ jobs:
         print("✓ backend healthcheck targets /health/ready")
         PY
 
-    - name: Verify migrations gate application services
+    - name: Verify migrations and Redis auth gate application services
       shell: bash
       run: |
         set -euo pipefail
@@ -110,11 +119,18 @@ jobs:
             assert condition == "service_completed_successfully", (
                 f"{service_name} must wait for successful migrations, got: {condition!r}"
             )
+            redis_url = services[service_name].get("environment", {}).get("REDIS_URL", "")
+            assert "REDIS_PASSWORD" in redis_url, f"{service_name} REDIS_URL must be derived from REDIS_PASSWORD"
+
+        redis_service = services["redis"]
+        assert "REDIS_PASSWORD" in redis_service.get("environment", {}), "Redis service must receive REDIS_PASSWORD"
+        redis_command = " ".join(redis_service.get("command", []))
+        assert "--requirepass" in redis_command, "Redis service must require authentication"
 
         frontend_build_args = services["frontend"].get("build", {}).get("args", {})
         assert "NEXT_PUBLIC_API_URL" in frontend_build_args, "frontend must receive NEXT_PUBLIC_API_URL at build time"
 
-        print("✓ migrations gate backend/worker and frontend public API URL is a build argument")
+        print("✓ migrations gate backend/worker; Redis authentication is required; frontend API URL is a build argument")
         PY
 
     - name: Verify Docker build contexts exclude local secrets and caches
@@ -135,6 +151,7 @@ jobs:
       env:
         JWT_SECRET: test-only-secret-for-clean-compose-smoke-at-least-32-characters-long
         POSTGRES_PASSWORD: test-only-postgres-password-for-clean-compose-smoke
+        REDIS_PASSWORD: test-only-redis-password-for-clean-compose-smoke
       run: |
         set -euo pipefail
 
@@ -176,6 +193,11 @@ jobs:
 
         test -s /tmp/booktranslate-frontend.html
 
+        unauthenticated_redis="$(docker compose exec -T redis redis-cli ping 2>/dev/null || true)"
+        test "$unauthenticated_redis" != "PONG"
+        authenticated_redis="$(docker compose exec -T redis sh -c 'redis-cli --no-auth-warning -a "$REDIS_PASSWORD" ping' | tr -d '\r')"
+        test "$authenticated_redis" = "PONG"
+
         expected_head="$(docker compose exec -T backend python -c 'from app.db import _expected_alembic_heads; heads=sorted(_expected_alembic_heads()); assert len(heads) == 1, heads; print(heads[0])' | tr -d '\r')"
         migration_version="$({ docker compose exec -T postgres psql -U booktranslate -d booktranslate -Atc 'SELECT version_num FROM alembic_version;'; } | tr -d '\r')"
         test "$migration_version" = "$expected_head"
@@ -210,7 +232,7 @@ jobs:
           sleep 1
         done
 
-        echo "✓ clean production stack started; frontend served HTTP; stale schema produced 503; restoring head recovered readiness"
+        echo "✓ clean production stack started with authenticated Redis; stale schema produced 503; restoring head recovered readiness"
 
     - name: Lint Dockerfiles
       run: |
