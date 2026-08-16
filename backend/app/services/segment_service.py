@@ -84,11 +84,12 @@ class SegmentService:
             await self.session.rollback()
             raise ConflictError("Segment translation update violates a database constraint.") from exc
 
-    async def delete_segment(self, segment_id: int) -> None:
+    async def delete_segment(self, segment_id: int, *, commit: bool = True) -> None:
         segment = await self.get_segment(segment_id)
         try:
             await self.repository.delete(segment)
-            await self.session.commit()
+            if commit:
+                await self.session.commit()
         except IntegrityError as exc:
             await self.session.rollback()
             raise ConflictError("Segment deletion violates a database constraint.") from exc
