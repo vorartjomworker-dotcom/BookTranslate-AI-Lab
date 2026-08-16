@@ -113,13 +113,41 @@ jobs:
 
         cat /tmp/booktranslate-health.json
 
+        expected_head="$(docker compose exec -T backend python -c 'from app.db import _expected_alembic_heads; heads=sorted(_expected_alembic_heads()); assert len(heads) == 1, heads; print(heads[0])' | tr -d '\r')"
         migration_version="$({ docker compose exec -T postgres psql -U booktranslate -d booktranslate -Atc 'SELECT version_num FROM alembic_version;'; } | tr -d '\r')"
-        test "$migration_version" = "006"
+        test "$migration_version" = "$expected_head"
 
         users_table="$({ docker compose exec -T postgres psql -U booktranslate -d booktranslate -Atc "SELECT to_regclass('public.users');"; } | tr -d '\r')"
         test "$users_table" = "users"
 
-        echo "✓ clean deployment reached /health/ready with Alembic revision 006 and users table present"
+        docker compose exec -T postgres psql -U booktranslate -d booktranslate -v ON_ERROR_STOP=1 -c "UPDATE alembic_version SET version_num = 'stale-test-revision';" >/dev/null
+
+        stale_status=""
+        for attempt in $(seq 1 10); do
+          stale_status="$(curl -sS -o /tmp/booktranslate-stale-health.json -w '%{http_code}' http://localhost:8000/health/ready || true)"
+          if [ "$stale_status" = "503" ]; then
+            break
+          fi
+          sleep 1
+        done
+        test "$stale_status" = "503"
+        cat /tmp/booktranslate-stale-health.json
+
+        docker compose exec -T postgres psql -U booktranslate -d booktranslate -v ON_ERROR_STOP=1 -c "UPDATE alembic_version SET version_num = '$expected_head';" >/dev/null
+
+        for attempt in $(seq 1 10); do
+          if curl -fsS http://localhost:8000/health/ready >/tmp/booktranslate-restored-health.json; then
+            break
+          fi
+          if [ "$attempt" -eq 10 ]; then
+            echo "backend did not recover readiness after restoring Alembic head"
+            cat /tmp/booktranslate-stale-health.json || true
+            exit 1
+          fi
+          sleep 1
+        done
+
+        echo "✓ clean deployment reached current Alembic head; stale schema produced 503; restoring head recovered readiness"
 
     - name: Check Dockerfile syntax
       run: |
