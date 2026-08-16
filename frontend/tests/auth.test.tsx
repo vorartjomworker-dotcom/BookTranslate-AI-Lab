@@ -204,6 +204,10 @@ it('blocks workspace visibility and interaction when a save fails with an expire
   expect(screen.queryByText('Source text')).toBeNull();
   expect(screen.queryByRole('button', { name: /dismiss/i })).toBeNull();
 
+  const saveRequests = () => fetchMock.mock.calls.filter(([input, init]) => (
+    String(input).endsWith('/api/v1/segments/21/translation') && init?.method === 'PATCH'
+  ));
+  expect(saveRequests()).toHaveLength(1);
   fireEvent.keyDown(window, { key: 's', ctrlKey: true });
-  expect(fetchMock.mock.calls.filter(([input]) => String(input).includes('/api/v1/segments/21/translation'))).toHaveLength(1);
+  expect(saveRequests()).toHaveLength(1);
 });
