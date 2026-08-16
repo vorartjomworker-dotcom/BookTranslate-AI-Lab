@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+from secrets import compare_digest
 from time import perf_counter
 from typing import Any, Awaitable, Callable
 from uuid import uuid4
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -16,6 +17,7 @@ from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.exceptions import APIError, ConflictError, NotFoundError, PayloadTooLargeError, UnsupportedMediaTypeError
 from app.db import check_database, close_database
+from app.metrics import observe_http_request, render_metrics, route_template
 from app.observability import log_http_request
 from app.redis_client import check_redis
 
@@ -89,12 +91,19 @@ async def add_request_id(request: Request, call_next):
         return response
     finally:
         status_code = response.status_code if response is not None else 500
+        elapsed_seconds = max(perf_counter() - started, 0.0)
         log_http_request(
             request_id=request_id,
             method=request.method,
             path=request.url.path,
             status_code=status_code,
-            duration_ms=(perf_counter() - started) * 1000.0,
+            duration_ms=elapsed_seconds * 1000.0,
+        )
+        observe_http_request(
+            method=request.method,
+            route=route_template(request.scope),
+            status_code=status_code,
+            duration_seconds=elapsed_seconds,
         )
 
 
@@ -193,6 +202,26 @@ async def root() -> dict[str, str]:
         "status": "running",
         "version": "0.1.0",
     }
+
+
+@app.get("/metrics", include_in_schema=False)
+async def metrics(request: Request) -> Response:
+    """Optional Prometheus endpoint protected by a dedicated static scrape token."""
+    if not settings.metrics_enabled:
+        raise StarletteHTTPException(status_code=404, detail="Not found.")
+
+    authorization = request.headers.get("Authorization", "")
+    scheme, separator, credential = authorization.partition(" ")
+    supplied_token = credential.strip() if separator and scheme.lower() == "bearer" else ""
+    if not supplied_token or not compare_digest(supplied_token, settings.metrics_bearer_token):
+        raise StarletteHTTPException(
+            status_code=401,
+            detail="Unauthorized.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    content, content_type = render_metrics()
+    return Response(content=content, status_code=200, headers={"Content-Type": content_type})
 
 
 _HEALTH_CHECK_TIMEOUT_SECONDS = 2.0
