@@ -1,4 +1,5 @@
 from app.models.base import Base
+from app.models.audit_event import AuditEvent
 from app.models.benchmark_run import BenchmarkCaseResult, BenchmarkRun
 from app.models.book import Book
 from app.models.chapter import Chapter
@@ -9,6 +10,7 @@ from app.models.user import User
 
 __all__ = [
     "Base",
+    "AuditEvent",
     "Book",
     "Chapter",
     "Segment",
