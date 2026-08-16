@@ -41,3 +41,8 @@ async def check_database() -> bool:
         current_revisions = frozenset(row[0] for row in result)
 
     return current_revisions == _expected_alembic_heads()
+
+
+async def close_database() -> None:
+    """Close pooled database connections during application shutdown."""
+    await engine.dispose()
