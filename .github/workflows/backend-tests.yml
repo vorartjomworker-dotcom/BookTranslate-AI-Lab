@@ -14,6 +14,10 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      JWT_SECRET: test-only-secret-for-ci-at-least-32-characters-long
+      JWT_ALGORITHM: HS256
+      JWT_EXPIRE_MINUTES: 15
     strategy:
       matrix:
         python-version: ['3.12']
@@ -107,9 +111,6 @@ jobs:
       env:
         DATABASE_URL: postgresql+asyncpg://booktranslate:booktranslate@localhost:5432/booktranslate_test
         REDIS_URL: redis://localhost:6379/0
-        JWT_SECRET: test-only-secret
-        JWT_ALGORITHM: HS256
-        JWT_EXPIRE_MINUTES: 15
         TRANSLATION_STREAM_NAME: translation_jobs
         TRANSLATION_CONSUMER_GROUP: translation-workers
         TRANSLATION_DLQ_STREAM_NAME: translation_jobs_dlq
