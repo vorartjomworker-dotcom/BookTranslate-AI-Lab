@@ -183,8 +183,7 @@ jobs:
 
         echo "✓ clean production stack started; frontend served HTTP; stale schema produced 503; restoring head recovered readiness"
 
-    - name: Check Dockerfile syntax
+    - name: Lint Dockerfiles
       run: |
-        docker run --rm -i hadolint/hadolint < backend/Dockerfile || true
-        docker run --rm -i hadolint/hadolint < frontend/Dockerfile || true
-      continue-on-error: true
+        docker run --rm -i hadolint/hadolint@sha256:32dac94127fd60b7b7e3fbfc65e1383b9b5e25c9bfd7b8536de7a539fe68a12d --failure-threshold warning - < backend/Dockerfile
+        docker run --rm -i hadolint/hadolint@sha256:32dac94127fd60b7b7e3fbfc65e1383b9b5e25c9bfd7b8536de7a539fe68a12d --failure-threshold warning - < frontend/Dockerfile
