@@ -27,6 +27,16 @@ describe('typed API client', () => {
     expect(fetchMock.mock.calls[0][1].headers.get('Content-Type')).toBeNull();
   });
 
+  it('always omits browser credentials for bearer-only authentication', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ items: [] }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await request('/api/v1/books', { credentials: 'include' });
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0][1].credentials).toBe('omit');
+  });
+
   it('propagates caller cancellation without converting it into a timeout', async () => {
     const controller = new AbortController();
     vi.stubGlobal('fetch', vi.fn().mockImplementation((_url, options) => new Promise((_resolve, reject) => options.signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError'))))));
