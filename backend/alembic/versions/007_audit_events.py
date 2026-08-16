@@ -22,7 +22,7 @@ depends_on: Sequence[str] | None = None
 def upgrade() -> None:
     op.create_table(
         "audit_events",
-        sa.Column("id", sa.BigInteger(), autoincrement=True, nullable=False),
+        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("actor_user_id", sa.Integer(), nullable=True),
         sa.Column("action", sa.String(length=100), nullable=False),
         sa.Column("outcome", sa.String(length=32), nullable=False),
