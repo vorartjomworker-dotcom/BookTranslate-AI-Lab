@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import ConflictError, NotFoundError
+from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.core.roles import ADMIN_ROLES, ROLE_ADMIN
 from app.core.security import hash_password, normalize_email
 from app.dependencies.auth import require_roles
@@ -39,6 +39,15 @@ async def update_user(user_id: int, payload: UserUpdate, db: AsyncSession = Depe
         raise NotFoundError("User not found.")
 
     changes = payload.model_dump(exclude_unset=True)
+    # Defense in depth: the schema rejects explicit nulls, but keep the route
+    # aligned with the NOT NULL database contract in case validation changes.
+    null_fields = [field for field in ("role", "is_active") if field in changes and changes[field] is None]
+    if null_fields:
+        raise ValidationError(
+            "User role and active state must not be null.",
+            details={"fields": null_fields},
+        )
+
     removes_active_admin = (
         user.role == ROLE_ADMIN
         and user.is_active
