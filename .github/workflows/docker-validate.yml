@@ -80,7 +80,10 @@ jobs:
                 f"{service_name} must wait for successful migrations, got: {condition!r}"
             )
 
-        print("✓ migrations run before backend and translator-worker")
+        frontend_build_args = services["frontend"].get("build", {}).get("args", {})
+        assert "NEXT_PUBLIC_API_URL" in frontend_build_args, "frontend must receive NEXT_PUBLIC_API_URL at build time"
+
+        print("✓ migrations gate backend/worker and frontend public API URL is a build argument")
         PY
 
     - name: Fresh Docker deployment smoke test
@@ -96,7 +99,7 @@ jobs:
         trap cleanup EXIT
 
         docker compose down -v --remove-orphans || true
-        docker compose up -d --build backend
+        docker compose up -d --build frontend
 
         for attempt in $(seq 1 60); do
           if curl -fsS http://localhost:8000/health/ready >/tmp/booktranslate-health.json; then
@@ -105,13 +108,28 @@ jobs:
           if [ "$attempt" -eq 60 ]; then
             echo "backend did not become ready after clean deployment"
             docker compose ps -a
-            docker compose logs --no-color migrate backend postgres redis
+            docker compose logs --no-color migrate backend postgres redis frontend
             exit 1
           fi
           sleep 2
         done
 
         cat /tmp/booktranslate-health.json
+
+        for attempt in $(seq 1 60); do
+          if curl -fsS http://localhost:3000/ >/tmp/booktranslate-frontend.html; then
+            break
+          fi
+          if [ "$attempt" -eq 60 ]; then
+            echo "production frontend did not become reachable after clean deployment"
+            docker compose ps -a
+            docker compose logs --no-color frontend backend
+            exit 1
+          fi
+          sleep 2
+        done
+
+        test -s /tmp/booktranslate-frontend.html
 
         expected_head="$(docker compose exec -T backend python -c 'from app.db import _expected_alembic_heads; heads=sorted(_expected_alembic_heads()); assert len(heads) == 1, heads; print(heads[0])' | tr -d '\r')"
         migration_version="$({ docker compose exec -T postgres psql -U booktranslate -d booktranslate -Atc 'SELECT version_num FROM alembic_version;'; } | tr -d '\r')"
@@ -147,7 +165,7 @@ jobs:
           sleep 1
         done
 
-        echo "✓ clean deployment reached current Alembic head; stale schema produced 503; restoring head recovered readiness"
+        echo "✓ clean production stack started; frontend served HTTP; stale schema produced 503; restoring head recovered readiness"
 
     - name: Check Dockerfile syntax
       run: |
