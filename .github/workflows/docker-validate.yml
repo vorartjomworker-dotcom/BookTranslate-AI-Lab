@@ -57,6 +57,32 @@ jobs:
         print("✓ backend healthcheck targets /health/ready")
         PY
 
+    - name: Verify migrations gate application services
+      shell: bash
+      run: |
+        set -euo pipefail
+        python - <<'PY'
+        import yaml
+
+        with open("docker-compose.yml") as f:
+            compose = yaml.safe_load(f)
+
+        services = compose["services"]
+        migrate = services.get("migrate")
+        assert migrate is not None, "Compose must define a migrate service"
+        assert migrate.get("command") == "alembic upgrade head", "migrate service must run alembic upgrade head"
+        assert "JWT_SECRET" in migrate.get("environment", {}), "migrate service must receive JWT_SECRET required by app settings"
+        assert migrate.get("depends_on", {}).get("postgres", {}).get("condition") == "service_healthy", "migrate must wait for healthy PostgreSQL"
+
+        for service_name in ("backend", "translator-worker"):
+            condition = services[service_name].get("depends_on", {}).get("migrate", {}).get("condition")
+            assert condition == "service_completed_successfully", (
+                f"{service_name} must wait for successful migrations, got: {condition!r}"
+            )
+
+        print("✓ migrations run before backend and translator-worker")
+        PY
+
     - name: Check Dockerfile syntax
       run: |
         docker run --rm -i hadolint/hadolint < backend/Dockerfile || true
