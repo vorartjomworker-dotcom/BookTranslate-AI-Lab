@@ -11,7 +11,7 @@ Implemented capabilities:
 - DOCX and EPUB ingestion with archive/file validation
 - deterministic chapter and segment persistence in PostgreSQL
 - OpenAI, Anthropic, and DeepL provider abstraction
-- PostgreSQL-backed translation job state with Redis Streams delivery
+- PostgreSQL-backed translation job state with authenticated Redis Streams delivery
 - async translation worker with retry/idempotency/stale-response protection
 - deterministic and AI-assisted quality evaluation
 - benchmark execution engine
@@ -28,7 +28,7 @@ Implemented capabilities:
 - SQLAlchemy 2 async ORM
 - PostgreSQL 17
 - Alembic migrations
-- Redis 7 / Redis Streams
+- Redis 7 / Redis Streams with password authentication in local Compose
 - Argon2id password hashing
 - HS256 short-lived JWT access tokens
 
@@ -41,7 +41,7 @@ Implemented capabilities:
 
 ### Containers
 
-The backend image includes the Alembic migration tree and runs as an unprivileged `booktranslate` user. The frontend uses a multi-stage production build, installs dependencies reproducibly with `npm ci`, builds with `next build`, and runs with `npm start` as the unprivileged Node user.
+The backend image includes the Alembic migration tree and runs as an unprivileged `booktranslate` user. The frontend uses a multi-stage production build, installs dependencies reproducibly with `npm ci`, builds with `next build`, and runs with `npm start` as the unprivileged Node user. Python and Node base images are pinned as `tag@sha256` for reproducible builds, while Dependabot remains responsible for proposing digest updates.
 
 ## Quick start with Docker Compose
 
@@ -51,13 +51,13 @@ The backend image includes the Alembic migration tree and runs as an unprivilege
 cp .env.example .env
 ```
 
-`JWT_SECRET` and `POSTGRES_PASSWORD` are intentionally empty in `.env.example`. Generate separate local values:
+`JWT_SECRET`, `POSTGRES_PASSWORD`, and `REDIS_PASSWORD` are intentionally empty in `.env.example`. Generate three independent URL-safe local values:
 
 ```bash
-python -c "import secrets; print('JWT_SECRET='+secrets.token_urlsafe(48)); print('POSTGRES_PASSWORD='+secrets.token_urlsafe(32))"
+python -c "import secrets; print('JWT_SECRET='+secrets.token_urlsafe(48)); print('POSTGRES_PASSWORD='+secrets.token_urlsafe(32)); print('REDIS_PASSWORD='+secrets.token_urlsafe(32))"
 ```
 
-Copy both generated values into `.env`. Do not commit `.env`, reuse these values across environments, or use development secrets in production.
+Copy all three generated values into `.env`. Do not commit `.env`, reuse these values across environments, or use development secrets in production.
 
 AI provider keys are optional unless the corresponding live provider is used.
 
@@ -73,7 +73,7 @@ Compose starts PostgreSQL first, then runs the one-shot `migrate` service with:
 alembic upgrade head
 ```
 
-The backend and translation worker start only after migrations complete successfully. The frontend waits for a healthy backend.
+The backend and translation worker start only after migrations complete successfully. The frontend waits for a healthy backend. The local Redis service requires `REDIS_PASSWORD`; backend and worker receive an authenticated Redis URL derived from that value.
 
 Local endpoints:
 
@@ -82,7 +82,7 @@ Local endpoints:
 - PostgreSQL: `127.0.0.1:5432`
 - Redis: `127.0.0.1:6379`
 
-PostgreSQL and Redis are bound only to localhost in the development Compose file rather than all host interfaces.
+PostgreSQL and Redis are bound only to localhost in the development Compose file rather than all host interfaces. Redis also requires authentication even on this localhost binding.
 
 ### 3. Verify health
 
@@ -97,7 +97,7 @@ curl http://localhost:8000/health/ready
 
 - PostgreSQL is reachable;
 - the database `alembic_version` exactly matches the Alembic head(s) shipped with the running backend image; and
-- Redis is reachable.
+- authenticated Redis connectivity succeeds.
 
 A stale or missing database schema therefore makes readiness fail with `503` even if PostgreSQL still accepts `SELECT 1`.
 
@@ -224,14 +224,19 @@ The Docker Compose validation workflow verifies more than YAML syntax. It checks
 
 - `JWT_SECRET` is required;
 - `POSTGRES_PASSWORD` is required;
+- `REDIS_PASSWORD` is required;
+- Redis starts with `--requirepass` and application services derive their Redis URL from the configured password;
+- unauthenticated Redis `PING` does not succeed while authenticated `PING` returns `PONG`;
 - the migration service executes `alembic upgrade head`;
 - backend and worker wait for successful migrations;
 - the frontend receives `NEXT_PUBLIC_API_URL` at build time;
+- Docker build contexts exclude local `.env`, dependency directories, and build caches;
 - a clean Docker deployment can build and start the production frontend/backend stack;
 - `/health/ready` succeeds at the current Alembic head;
 - the expected `users` table exists;
 - forcing a stale Alembic revision makes readiness return `503`;
-- restoring the current head restores readiness.
+- restoring the current head restores readiness;
+- Hadolint is a blocking Dockerfile gate for warning/error findings.
 
 ## Security and deployment notes
 
@@ -242,13 +247,13 @@ The repository is an advanced MVP / pre-production platform, not a finished prod
 - password reset/recovery workflow beyond administrator CLI recovery;
 - audit logging for authentication, user administration, destructive actions, and live-provider operations;
 - server-side session/token revocation if immediate revocation is required;
-- Redis authentication/TLS or a managed private Redis service;
+- TLS for Redis traffic or a managed private Redis service for production deployments;
 - production secret management rather than local `.env` files;
 - backup/restore procedures for PostgreSQL and uploaded documents;
 - metrics, centralized structured logs, tracing, and alerting;
 - multi-tenant isolation if the product will host independent organizations.
 
-The local Compose file keeps PostgreSQL and Redis reachable on localhost for development convenience. Production deployments should normally keep data services on private networks without host-published database/cache ports.
+The local Compose file keeps PostgreSQL and Redis reachable on localhost for development convenience. Production deployments should normally keep data services on private networks without host-published database/cache ports and should use encrypted transport where required.
 
 ## License
 
