@@ -53,11 +53,12 @@ class ChapterService:
             await self.session.rollback()
             raise ConflictError("Chapter update violates a database constraint.") from exc
 
-    async def delete_chapter(self, chapter_id: int) -> None:
+    async def delete_chapter(self, chapter_id: int, *, commit: bool = True) -> None:
         chapter = await self.get_chapter(chapter_id)
         try:
             await self.repository.delete(chapter)
-            await self.session.commit()
+            if commit:
+                await self.session.commit()
         except IntegrityError as exc:
             await self.session.rollback()
             raise ConflictError("Chapter deletion violates a database constraint.") from exc
