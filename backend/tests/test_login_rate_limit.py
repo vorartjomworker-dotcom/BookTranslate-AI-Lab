@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+import asyncio
+from typing import AsyncGenerator
+
 import pytest
 from fastapi.testclient import TestClient
 from redis.exceptions import RedisError
+from sqlalchemy import select
 
 import app.auth.rate_limit as rate_limit
 from app.core.exceptions import APIError
 from app.dependencies.db import get_db
 from app.main import app
+from app.models import AuditEvent
 
 
 class _FakeRedis:
@@ -98,7 +103,10 @@ async def test_login_rate_limit_does_not_send_raw_identity_values_to_redis(monke
     assert "auth:login:ip:" in call_text
 
 
-def test_login_endpoint_preserves_rate_limit_contract_and_retry_after(monkeypatch) -> None:
+def test_login_endpoint_preserves_rate_limit_contract_and_audits_event(
+    monkeypatch,
+    async_session_factory,
+) -> None:
     async def reject_login_attempt(**_kwargs) -> None:
         raise APIError(
             "Too many login attempts. Please try again later.",
@@ -107,11 +115,12 @@ def test_login_endpoint_preserves_rate_limit_contract_and_retry_after(monkeypatc
             headers={"Retry-After": "17"},
         )
 
-    async def unused_db():
-        yield object()
+    async def override_get_db() -> AsyncGenerator:
+        async with async_session_factory() as session:
+            yield session
 
     monkeypatch.setattr("app.api.v1.auth.enforce_login_rate_limit", reject_login_attempt)
-    app.dependency_overrides[get_db] = unused_db
+    app.dependency_overrides[get_db] = override_get_db
     try:
         with TestClient(app) as client:
             response = client.post(
@@ -127,3 +136,16 @@ def test_login_endpoint_preserves_rate_limit_contract_and_retry_after(monkeypatc
     assert body["code"] == "rate_limited"
     assert body["message"] == "Too many login attempts. Please try again later."
     assert body["request_id"] == response.headers["X-Request-ID"]
+
+    async def _load_event() -> AuditEvent:
+        async with async_session_factory() as session:
+            event = (await session.execute(select(AuditEvent))).scalar_one()
+            return event
+
+    event = asyncio.run(_load_event())
+    assert event.action == "auth.login"
+    assert event.outcome == "rate_limited"
+    assert event.request_id == body["request_id"]
+    assert event.subject_hash is not None
+    assert event.source_hash is not None
+    assert "user@example.com" not in str(event.details)
