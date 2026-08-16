@@ -6,14 +6,30 @@ on:
     paths:
       - 'docker-compose.yml'
       - 'backend/Dockerfile'
+      - 'backend/.dockerignore'
+      - 'backend/requirements-runtime.txt'
+      - 'backend/alembic.ini'
+      - 'backend/alembic/**'
       - 'frontend/Dockerfile'
+      - 'frontend/.dockerignore'
+      - 'frontend/package.json'
+      - 'frontend/package-lock.json'
+      - 'frontend/next.config.*'
       - '.github/workflows/docker-validate.yml'
   pull_request:
     branches: [ main, develop ]
     paths:
       - 'docker-compose.yml'
       - 'backend/Dockerfile'
+      - 'backend/.dockerignore'
+      - 'backend/requirements-runtime.txt'
+      - 'backend/alembic.ini'
+      - 'backend/alembic/**'
       - 'frontend/Dockerfile'
+      - 'frontend/.dockerignore'
+      - 'frontend/package.json'
+      - 'frontend/package-lock.json'
+      - 'frontend/next.config.*'
       - '.github/workflows/docker-validate.yml'
 
 permissions:
@@ -100,6 +116,19 @@ jobs:
 
         print("✓ migrations gate backend/worker and frontend public API URL is a build argument")
         PY
+
+    - name: Verify Docker build contexts exclude local secrets and caches
+      shell: bash
+      run: |
+        set -euo pipefail
+        for ignore_file in backend/.dockerignore frontend/.dockerignore; do
+          test -f "$ignore_file"
+          grep -Fxq '.env' "$ignore_file"
+        done
+        grep -Fxq '.venv' backend/.dockerignore
+        grep -Fxq 'node_modules' frontend/.dockerignore
+        grep -Fxq '.next' frontend/.dockerignore
+        echo "✓ Docker build contexts exclude local secrets and generated dependency/build directories"
 
     - name: Fresh Docker deployment smoke test
       shell: bash
