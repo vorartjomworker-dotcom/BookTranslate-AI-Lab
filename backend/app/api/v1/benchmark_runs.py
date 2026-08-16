@@ -69,7 +69,7 @@ async def create_benchmark_run(payload: BenchmarkRunCreateRequest, db: AsyncSess
         dry_run=payload.dry_run,
         confirm_live_provider=payload.confirm_live_provider,
     )
-    return {"run_id": run.run_id, "status": run.status, "dataset_version": run.dataset_version, "dataset_checksum": run.dataset_checksum}
+    return {"run_id": run.run_id, "status": run.status, "dry_run": run.dry_run, "dataset_version": run.dataset_version, "dataset_checksum": run.dataset_checksum}
 
 
 @router.get("/benchmark-runs", response_model=dict[str, Any])
@@ -92,6 +92,7 @@ async def list_benchmark_runs(
                 "provider": run.provider,
                 "model": run.model,
                 "status": run.status,
+                "dry_run": run.dry_run,
                 "created_at": run.created_at.isoformat() if run.created_at else None,
             }
             for run in runs
@@ -114,6 +115,7 @@ async def get_benchmark_run(run_id: str, db: AsyncSession = Depends(get_db), _: 
         "dataset_name": run.dataset_name,
         "dataset_version": run.dataset_version,
         "dataset_checksum": run.dataset_checksum,
+        "dry_run": run.dry_run,
         "metrics": run.metrics,
         "category_metrics": run.category_metrics,
         "error_code": run.error_code,
@@ -163,7 +165,7 @@ async def resume_benchmark_run(
     if user.role != "admin" and not run.dry_run:
         raise AuthorizationError("Only administrators may resume live provider benchmarks.")
     run = await service.resume_run(run_id)
-    return {"run_id": run.run_id, "status": run.status, "resumed": True}
+    return {"run_id": run.run_id, "status": run.status, "dry_run": run.dry_run, "resumed": True}
 
 
 @router.post("/benchmark-runs/{run_id}/cancel", status_code=status.HTTP_202_ACCEPTED)
