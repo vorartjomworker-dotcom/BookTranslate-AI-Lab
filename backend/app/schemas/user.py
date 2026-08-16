@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 
 class UserRead(BaseModel):
@@ -38,7 +38,16 @@ class UserCreate(BaseModel):
 
 
 class UserUpdate(BaseModel):
+    # PATCH semantics: fields may be omitted, but explicit JSON null is forbidden
+    # because both database columns are NOT NULL.
     role: str | None = Field(default=None, pattern="^(admin|editor|viewer)$")
     is_active: bool | None = None
+
+    @field_validator("role", "is_active", mode="before")
+    @classmethod
+    def reject_explicit_null(cls, value):
+        if value is None:
+            raise ValueError("Field may be omitted but must not be null when provided.")
+        return value
 
     model_config = ConfigDict(extra="forbid")
