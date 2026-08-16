@@ -46,8 +46,8 @@ To perform a destructive restore, set:
 EOF
     exit 1
   fi
-  # Prevent application writes while the database is replaced.
-  docker compose stop frontend backend translator-worker >/dev/null || true
+  # Stop only application writers; the stateless frontend may remain available.
+  docker compose stop backend translator-worker >/dev/null || true
 fi
 
 # Terminate connections, replace the target DB, and restore without archive ownership/ACL metadata.
@@ -75,6 +75,6 @@ echo "Restored Alembic revision: $restored_revision"
 if [[ "$in_place" -eq 1 ]]; then
   # Bring restored schema to the code's current migration head before serving traffic.
   docker compose run --rm migrate
-  docker compose up -d backend translator-worker frontend
-  echo "In-place restore migrated to current head and application services restarted."
+  docker compose up -d backend translator-worker
+  echo "In-place restore migrated to current head and application writers restarted."
 fi
