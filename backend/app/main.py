@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+from time import perf_counter
 from typing import Any, Awaitable, Callable
 from uuid import uuid4
 
@@ -15,6 +16,7 @@ from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.exceptions import APIError, ConflictError, NotFoundError, PayloadTooLargeError, UnsupportedMediaTypeError
 from app.db import check_database, close_database
+from app.observability import log_http_request
 from app.redis_client import check_redis
 
 
@@ -49,41 +51,51 @@ app = FastAPI(
 async def add_request_id(request: Request, call_next):
     request_id = uuid4().hex
     request.state.request_id = request_id
+    started = perf_counter()
+    response = None
     try:
-        response = await call_next(request)
-    except Exception as exc:
-        if isinstance(exc, RequestValidationError):
-            handler = app.exception_handlers.get(RequestValidationError)
-            if handler is not None:
-                response = await handler(request, exc)
+        try:
+            response = await call_next(request)
+        except Exception as exc:
+            if isinstance(exc, RequestValidationError):
+                handler = app.exception_handlers.get(RequestValidationError)
+                if handler is not None:
+                    response = await handler(request, exc)
+                else:
+                    response = JSONResponse(status_code=422, content={"code": "validation_error", "message": "Validation error.", "details": {}, "request_id": request_id})
+            elif isinstance(exc, NotFoundError):
+                handler = app.exception_handlers.get(NotFoundError)
+                if handler is not None:
+                    response = await handler(request, exc)
+                else:
+                    response = JSONResponse(status_code=404, content=exc.to_dict(request_id))
+            elif isinstance(exc, ConflictError):
+                handler = app.exception_handlers.get(ConflictError)
+                if handler is not None:
+                    response = await handler(request, exc)
+                else:
+                    response = JSONResponse(status_code=409, content=exc.to_dict(request_id))
             else:
-                response = JSONResponse(status_code=422, content={"code": "validation_error", "message": "Validation error.", "details": {}, "request_id": request_id})
-        elif isinstance(exc, NotFoundError):
-            handler = app.exception_handlers.get(NotFoundError)
-            if handler is not None:
-                response = await handler(request, exc)
-            else:
-                response = JSONResponse(status_code=404, content=exc.to_dict(request_id))
-        elif isinstance(exc, ConflictError):
-            handler = app.exception_handlers.get(ConflictError)
-            if handler is not None:
-                response = await handler(request, exc)
-            else:
-                response = JSONResponse(status_code=409, content=exc.to_dict(request_id))
-        else:
-            response = JSONResponse(
-                status_code=500,
-                content={
-                    "code": "internal_server_error",
-                    "message": "Internal server error.",
-                    "details": {},
-                    "request_id": request_id,
-                },
-            )
+                response = JSONResponse(
+                    status_code=500,
+                    content={
+                        "code": "internal_server_error",
+                        "message": "Internal server error.",
+                        "details": {},
+                        "request_id": request_id,
+                    },
+                )
         response.headers["X-Request-ID"] = request_id
         return response
-    response.headers["X-Request-ID"] = request_id
-    return response
+    finally:
+        status_code = response.status_code if response is not None else 500
+        log_http_request(
+            request_id=request_id,
+            method=request.method,
+            path=request.url.path,
+            status_code=status_code,
+            duration_ms=(perf_counter() - started) * 1000.0,
+        )
 
 
 @app.exception_handler(NotFoundError)
