@@ -14,7 +14,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.exceptions import APIError, ConflictError, NotFoundError, PayloadTooLargeError, UnsupportedMediaTypeError
-from app.db import check_database
+from app.db import check_database, close_database
 from app.redis_client import check_redis
 
 
@@ -31,7 +31,10 @@ def _exception_response_headers(headers: dict[str, str] | None) -> dict[str, str
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    yield
+    try:
+        yield
+    finally:
+        await close_database()
 
 
 app = FastAPI(
@@ -222,7 +225,7 @@ async def health_live() -> dict[str, object]:
 
 @app.get("/health/ready")
 async def health_ready() -> JSONResponse:
-    """Readiness probe: 200 only when PostgreSQL and Redis are both reachable, otherwise 503."""
+    """Readiness probe: 200 only when PostgreSQL schema and Redis are ready, otherwise 503."""
     db_ok, redis_ok = await _check_dependencies()
     ready = db_ok and redis_ok
     payload = {
