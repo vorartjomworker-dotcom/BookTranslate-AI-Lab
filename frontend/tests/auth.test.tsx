@@ -198,7 +198,7 @@ it('blocks workspace visibility and interaction when a save fails with an expire
 
   await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/v1/segments/21/translation'), expect.objectContaining({ method: 'PATCH' })));
   const dialog = await screen.findByRole('alertdialog', { name: 'Session expired' });
-  expect(dialog).toHaveAttribute('aria-modal', 'true');
+  expect(dialog.getAttribute('aria-modal')).toBe('true');
   expect(screen.getByRole('button', { name: /log in again/i })).toBeTruthy();
   expect(screen.queryByLabelText('Translation')).toBeNull();
   expect(screen.queryByText('Source text')).toBeNull();

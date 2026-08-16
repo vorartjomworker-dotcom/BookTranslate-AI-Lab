@@ -34,7 +34,7 @@ function SessionExpiredGate({ onLogInAgain }: { onLogInAgain: () => void }) {
 }
 
 export default function HomePage() {
-  const { user, status: authStatus, sessionExpired, logout, reauthenticate } = useAuth();
+  const { user, status: authStatus, sessionExpired, logout, reauthenticate, dismissSessionExpired } = useAuth();
   const [section, setSection] = useState<Section>('books');
   const [books, setBooks] = useState<Book[]>([]);
   const [selectedBook, setSelectedBook] = useState<Book | null>(null);
