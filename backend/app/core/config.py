@@ -71,7 +71,7 @@ class Settings(BaseSettings):
     benchmark_dataset_name: str = "technical_translation"
     benchmark_dataset_version: str = "2026.08.15"
 
-    jwt_secret: str = ""
+    jwt_secret: str
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 15
     cors_allowed_origins: list[str] = ["http://localhost:3000", "http://localhost:3001"]
@@ -150,6 +150,14 @@ class Settings(BaseSettings):
         if abs(total - 1.0) > 1e-9:
             raise ValueError("quality deterministic and AI weights must sum to 1")
         return self
+
+    @field_validator("jwt_secret")
+    @classmethod
+    def validate_jwt_secret(cls, value: str) -> str:
+        secret = value.strip()
+        if len(secret) < 32:
+            raise ValueError("jwt_secret must contain at least 32 characters")
+        return secret
 
     @field_validator("jwt_expire_minutes")
     @classmethod
