@@ -11,7 +11,7 @@ from app.audit import audit_hash
 from app.core.security import create_access_token, hash_password
 from app.dependencies.db import get_db
 from app.main import app
-from app.models import AuditEvent, User
+from app.models import AuditEvent, Book, Chapter, Segment, User
 
 
 @pytest.fixture
@@ -141,6 +141,93 @@ def test_admin_user_creation_and_update_are_audited(audit_client, async_session_
     assert update_event.actor_user_id == admin.id
     assert update_event.target_id == str(created_id)
     assert update_event.details == {"changed_fields": ["role"]}
+
+
+def test_destructive_resource_deletes_are_audited(audit_client, async_session_factory) -> None:
+    admin = asyncio.run(_create_user(async_session_factory, email="audit-delete-admin@example.com", password="admin-password-1", role="admin"))
+
+    async def _seed() -> tuple[int, int, int]:
+        async with async_session_factory() as session:
+            book_for_segment = Book(title="Segment Book", author="A", file_path="segment.epub", file_type="epub", language="en", status="uploaded")
+            session.add(book_for_segment)
+            await session.flush()
+            chapter_for_segment = Chapter(book_id=book_for_segment.id, chapter_number=1, title="Segment Chapter", status="segmented")
+            session.add(chapter_for_segment)
+            await session.flush()
+            segment = Segment(chapter_id=chapter_for_segment.id, segment_number=1, original_text="Hello", translated_text=None)
+            session.add(segment)
+
+            book_for_chapter = Book(title="Chapter Book", author="A", file_path="chapter.epub", file_type="epub", language="en", status="uploaded")
+            session.add(book_for_chapter)
+            await session.flush()
+            chapter = Chapter(book_id=book_for_chapter.id, chapter_number=1, title="Delete Chapter", status="segmented")
+            session.add(chapter)
+
+            book = Book(title="Delete Book", author="A", file_path="book.epub", file_type="epub", language="en", status="uploaded")
+            session.add(book)
+            await session.commit()
+            await session.refresh(segment)
+            await session.refresh(chapter)
+            await session.refresh(book)
+            return segment.id, chapter.id, book.id
+
+    segment_id, chapter_id, book_id = asyncio.run(_seed())
+    headers = _auth_header(admin)
+
+    segment_response = audit_client.delete(f"/api/v1/segments/{segment_id}", headers=headers)
+    chapter_response = audit_client.delete(f"/api/v1/chapters/{chapter_id}", headers=headers)
+    book_response = audit_client.delete(f"/api/v1/books/{book_id}", headers=headers)
+
+    assert segment_response.status_code == 204, segment_response.text
+    assert chapter_response.status_code == 204, chapter_response.text
+    assert book_response.status_code == 204, book_response.text
+
+    events = asyncio.run(_events(async_session_factory))
+    by_action = {event.action: event for event in events}
+    assert by_action["segment.delete"].target_id == str(segment_id)
+    assert by_action["chapter.delete"].target_id == str(chapter_id)
+    assert by_action["book.delete"].target_id == str(book_id)
+    for action in ("segment.delete", "chapter.delete", "book.delete"):
+        assert by_action[action].outcome == "success"
+        assert by_action[action].actor_user_id == admin.id
+        assert by_action[action].request_id is not None
+
+
+def test_benchmark_create_and_cancel_are_audited(audit_client, async_session_factory) -> None:
+    admin = asyncio.run(_create_user(async_session_factory, email="audit-benchmark-admin@example.com", password="admin-password-1", role="admin"))
+    headers = _auth_header(admin)
+
+    create_response = audit_client.post(
+        "/api/v1/benchmark-runs",
+        headers=headers,
+        json={"provider": "openai", "model": "gpt-4o", "dry_run": True},
+    )
+    assert create_response.status_code == 202, create_response.text
+    run_id = create_response.json()["run_id"]
+
+    cancel_response = audit_client.post(
+        f"/api/v1/benchmark-runs/{run_id}/cancel",
+        headers=headers,
+        json={"reason": "audit regression test"},
+    )
+    assert cancel_response.status_code == 202, cancel_response.text
+
+    events = asyncio.run(_events(async_session_factory))
+    create_event = next(event for event in events if event.action == "benchmark.create")
+    cancel_event = next(event for event in events if event.action == "benchmark.cancel")
+
+    assert create_event.actor_user_id == admin.id
+    assert create_event.outcome == "success"
+    assert create_event.details == {
+        "provider": "openai",
+        "model": "gpt-4o",
+        "dry_run": True,
+        "dataset_version": create_response.json()["dataset_version"],
+    }
+    assert cancel_event.actor_user_id == admin.id
+    assert cancel_event.target_id == run_id
+    assert cancel_event.details["reason_provided"] is True
+    assert "audit regression test" not in str(cancel_event.details)
 
 
 def test_audit_feed_is_admin_only(audit_client, async_session_factory) -> None:
