@@ -8,9 +8,16 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY alembic.ini ./alembic.ini
-COPY alembic ./alembic
-COPY app ./app
+RUN addgroup --system booktranslate \
+    && adduser --system --ingroup booktranslate --home /home/booktranslate booktranslate \
+    && mkdir -p /var/lib/booktranslate/uploads \
+    && chown -R booktranslate:booktranslate /var/lib/booktranslate /home/booktranslate
+
+COPY --chown=booktranslate:booktranslate alembic.ini ./alembic.ini
+COPY --chown=booktranslate:booktranslate alembic ./alembic
+COPY --chown=booktranslate:booktranslate app ./app
+
+USER booktranslate
 
 EXPOSE 8000
 
