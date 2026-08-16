@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, Query, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Query, Request, Response, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.audit import AuditService
 from app.core.exceptions import ValidationError
 from app.core.pagination import MAX_PAGE_SIZE, build_paginated_response, normalize_pagination
 from app.core.roles import ADMIN_ROLES, EDITOR_ROLES
@@ -38,7 +39,6 @@ async def get_book(book_id: int, db: AsyncSession = Depends(get_db), _: User = D
     return BookRead.model_validate(item)
 
 
-
 @router.post("", response_model=BookRead, status_code=status.HTTP_201_CREATED)
 async def create_book(payload: BookCreate, db: AsyncSession = Depends(get_db), _: User = Depends(require_roles(*EDITOR_ROLES))) -> BookRead:
     service = BookService(db)
@@ -54,9 +54,23 @@ async def patch_book(book_id: int, payload: BookUpdate, db: AsyncSession = Depen
 
 
 @router.delete("/{book_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
-async def delete_book(book_id: int, db: AsyncSession = Depends(get_db), _: User = Depends(require_roles(*ADMIN_ROLES))) -> Response:
+async def delete_book(
+    book_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    actor: User = Depends(require_roles(*ADMIN_ROLES)),
+) -> Response:
     service = BookService(db)
-    await service.delete_book(book_id)
+    await service.delete_book(book_id, commit=False)
+    await AuditService(db).record(
+        action="book.delete",
+        outcome="success",
+        actor_user_id=actor.id,
+        target_type="book",
+        target_id=book_id,
+        request_id=getattr(request.state, "request_id", None),
+    )
+    await db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
