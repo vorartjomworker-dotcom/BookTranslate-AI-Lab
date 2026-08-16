@@ -83,12 +83,10 @@ it('shows the login screen when there is no valid session', async () => {
 });
 
 it('logs in successfully and reaches the workspace', async () => {
-  let loggedIn = false;
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method || 'GET';
     if (url.endsWith('/api/v1/auth/login') && method === 'POST') {
-      loggedIn = true;
       return json({ access_token: 'test-token', token_type: 'bearer', expires_in: 900, user: editorUser });
     }
     const workspaceResponse = workspaceRoutes(url, method);
