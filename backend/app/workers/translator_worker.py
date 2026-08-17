@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 import logging
 import signal
 import sys
@@ -34,8 +33,7 @@ async def ensure_stream_group(redis: Redis, stream_name: str, group_name: str) -
     try:
         await redis.xgroup_create(stream_name, group_name, id="0-0", mkstream=True)
     except Exception as exc:  # pragma: no cover - defensive for concurrent startup
-        message = str(exc)
-        if "BUSYGROUP" not in message:
+        if "BUSYGROUP" not in str(exc):
             raise
 
 
@@ -48,6 +46,11 @@ async def enqueue_translation_job(
     target_language: str | None = None,
     redis_client: Redis | None = None,
 ) -> dict[str, Any]:
+    """Legacy enqueue helper kept for compatibility.
+
+    The durable worker never treats this payload as authoritative for a tracked job;
+    PostgreSQL ``TranslationJob`` state wins for segment/provider/model at execution time.
+    """
     client = redis_client or Redis.from_url(settings.redis_url, decode_responses=True)
     stream_name = settings.translation_stream_name
     payload = {
@@ -73,7 +76,7 @@ async def enqueue_translation_job(
 
 
 class TranslatorWorker:
-    """Background worker for processing translation jobs."""
+    """Background worker for durable translation jobs."""
 
     def __init__(self) -> None:
         self.redis: Redis | None = None
@@ -184,26 +187,86 @@ class TranslatorWorker:
             logger.warning("Could not persist translation job %s state=%s: %s", job_id, status, exc)
 
     async def process_translation_job(self, segment_id: int, job_id: int | None = None, **kwargs: Any) -> dict[str, Any]:
-        """Process a single translation job by reading the segment and translating it."""
-        logger.info("Processing translation job for segment %d (job_id=%s)", segment_id, job_id)
+        """Process one translation job.
 
+        For durable jobs, Redis data is only a delivery hint. The PostgreSQL
+        ``TranslationJob`` row is authoritative for segment, provider and model so a
+        stale/corrupt stream message cannot translate the wrong segment or substitute a
+        provider/model after the job was created.
+        """
+        hinted_segment_id = int(segment_id)
         provider = (kwargs.get("provider") or settings.default_ai_provider or "openai").strip().lower()
+        model = kwargs.get("model") or settings.default_ai_model
         source_language = (kwargs.get("source_language") or settings.default_source_language or "en").strip().lower()
         target_language = (kwargs.get("target_language") or settings.default_target_language or "ru").strip().lower()
 
         result: dict[str, Any] = {
             "job_id": job_id,
-            "segment_id": segment_id,
+            "segment_id": hinted_segment_id,
             "status": "queued",
             "provider": provider,
         }
 
         try:
+            claim_status: str | None = None
             if job_id is not None:
                 claim_status = await self._claim_job_for_processing(job_id)
-                if claim_status == "completed":
-                    async with async_session_factory() as session:
-                        segment = await session.get(Segment, segment_id)
+                if claim_status == "missing":
+                    return {
+                        "job_id": job_id,
+                        "segment_id": hinted_segment_id,
+                        "status": "failed",
+                        "provider": provider,
+                        "duplicate": True,
+                        "error_code": "translation_job_not_found",
+                    }
+
+            async with async_session_factory() as session:
+                job = await session.get(TranslationJob, job_id) if job_id is not None else None
+                if job_id is not None and job is None:
+                    return {
+                        "job_id": job_id,
+                        "segment_id": hinted_segment_id,
+                        "status": "failed",
+                        "provider": provider,
+                        "duplicate": True,
+                        "error_code": "translation_job_not_found",
+                    }
+
+                if job is not None:
+                    durable_segment_id = int(getattr(job, "segment_id", hinted_segment_id) or hinted_segment_id)
+                    durable_provider = (getattr(job, "provider", None) or settings.default_ai_provider or "openai").strip().lower()
+                    durable_model = getattr(job, "model", None) or settings.default_ai_model
+
+                    if durable_segment_id != hinted_segment_id:
+                        logger.warning(
+                            "Ignoring mismatched Redis segment hint for durable job %s (hint=%s durable=%s)",
+                            job_id,
+                            hinted_segment_id,
+                            durable_segment_id,
+                        )
+                    stream_provider = (kwargs.get("provider") or "").strip().lower()
+                    if stream_provider and stream_provider != durable_provider:
+                        logger.warning("Ignoring mismatched Redis provider hint for durable job %s", job_id)
+                    stream_model = kwargs.get("model")
+                    if stream_model and stream_model != durable_model:
+                        logger.warning("Ignoring mismatched Redis model hint for durable job %s", job_id)
+
+                    segment_id = durable_segment_id
+                    provider = durable_provider
+                    model = durable_model
+                    # Source/target languages are not mutable queue authority for a
+                    # durable job; current job schema uses application language defaults.
+                    source_language = (settings.default_source_language or "en").strip().lower()
+                    target_language = (settings.default_target_language or "ru").strip().lower()
+
+                segment = await session.get(Segment, segment_id)
+                if segment is None:
+                    raise RuntimeError("segment not found")
+
+                result.update({"segment_id": segment_id, "provider": provider})
+
+                if claim_status == "completed" or (job is not None and job.status == "completed"):
                     return {
                         "job_id": job_id,
                         "segment_id": segment_id,
@@ -213,7 +276,7 @@ class TranslatorWorker:
                         "qa_score": getattr(segment, "qa_score", None),
                         "qa_status": getattr(segment, "qa_status", None),
                     }
-                if claim_status == "failed":
+                if claim_status == "failed" or (job is not None and job.status == "failed"):
                     return {
                         "job_id": job_id,
                         "segment_id": segment_id,
@@ -229,43 +292,6 @@ class TranslatorWorker:
                         "provider": provider,
                         "duplicate": True,
                     }
-                if claim_status == "missing":
-                    return {
-                        "job_id": job_id,
-                        "segment_id": segment_id,
-                        "status": "failed",
-                        "provider": provider,
-                        "duplicate": True,
-                        "error_code": "translation_job_not_found",
-                    }
-
-            async with async_session_factory() as session:
-                segment = await session.get(Segment, segment_id)
-                if segment is None:
-                    raise RuntimeError("segment not found")
-
-                job = await session.get(TranslationJob, job_id) if job_id is not None else None
-
-                # Defense in depth for a terminal transition that may have happened
-                # after the claim transaction but before this processing transaction.
-                if job is not None and job.status == "completed":
-                    return {
-                        "job_id": job_id,
-                        "segment_id": segment_id,
-                        "status": "completed",
-                        "provider": provider,
-                        "duplicate": True,
-                        "qa_score": segment.qa_score,
-                        "qa_status": segment.qa_status,
-                    }
-                if job is not None and job.status == "failed":
-                    return {
-                        "job_id": job_id,
-                        "segment_id": segment_id,
-                        "status": "failed",
-                        "provider": provider,
-                        "duplicate": True,
-                    }
 
                 partial_result: dict[str, Any] = {
                     "job_id": job_id,
@@ -274,8 +300,8 @@ class TranslatorWorker:
                     "provider": provider,
                 }
 
-                # Step 1: AI translation. Provider/business failures are legitimate, non-retryable
-                # outcomes here -- they are recorded and acknowledged, not treated as persistence errors.
+                # Step 1: AI translation. Provider/business failures are legitimate,
+                # terminal outcomes here and are persisted before the stream is ACKed.
                 try:
                     service = TranslationService(settings_obj=settings)
                     result_model = await service.translate(
@@ -284,7 +310,7 @@ class TranslatorWorker:
                             source_language=source_language,
                             target_language=target_language,
                             provider=provider,
-                            model=settings.default_ai_model,
+                            model=model,
                             profile="general",
                         )
                     )
@@ -305,28 +331,31 @@ class TranslatorWorker:
                     except Exception as persistence_exc:  # pragma: no cover - real DB outage
                         logger.exception("Could not persist failed translation job %s", job_id)
                         await session.rollback()
-                        partial_result.update({
-                            "status": "failed",
-                            "message": str(persistence_exc),
-                            "error_code": persistence_exc.__class__.__name__,
-                            "persistence_error": True,
-                        })
+                        partial_result.update(
+                            {
+                                "status": "failed",
+                                "message": str(persistence_exc),
+                                "error_code": persistence_exc.__class__.__name__,
+                                "persistence_error": True,
+                            }
+                        )
                         result.update(partial_result)
                         return partial_result
-                    partial_result.update({
-                        "status": "failed",
-                        "message": str(exc),
-                        "error_code": getattr(exc, "code", exc.__class__.__name__),
-                    })
+                    partial_result.update(
+                        {
+                            "status": "failed",
+                            "message": str(exc),
+                            "error_code": getattr(exc, "code", exc.__class__.__name__),
+                        }
+                    )
                     result.update(partial_result)
                     return partial_result
 
-                # Steps 2-4: update Segment -> QA report -> update TranslationJob, all in one
-                # transaction. Any failure here (including QA persistence failures) rolls back and
-                # is surfaced as a persistence error so the caller does not XACK the message.
+                # Steps 2-4: Segment update -> QA report -> TranslationJob completion
+                # occur in one transaction. Persistence failure leaves the stream unacked.
                 try:
                     segment.translated_text = result_model.translated_text
-                    segment.model_used = result_model.model or provider
+                    segment.model_used = result_model.model or model or provider
                     segment.confidence = result_model.confidence if result_model.confidence is not None else segment.confidence
                     segment.tokens_used = int(result_model.total_tokens or segment.tokens_used)
                     segment.latency_ms = int(result_model.latency_ms or segment.latency_ms)
@@ -337,14 +366,14 @@ class TranslatorWorker:
                         source_text=segment.original_text,
                         translated_text=result_model.translated_text,
                         provider=provider,
-                        model=result_model.model or settings.default_ai_model,
+                        model=result_model.model or model,
                         source_language=source_language,
                         target_language=target_language,
                         translation_job_id=job_id,
                     )
 
-                    # A low/failed QA score is informational only; it never triggers an automatic
-                    # (paid) retranslation. The job is considered complete once translated.
+                    # A low/failed QA score is informational only; it never triggers an
+                    # automatic paid retranslation.
                     segment.status = "translated"
                     if job is not None:
                         job.status = "completed"
@@ -362,37 +391,43 @@ class TranslatorWorker:
                         await self._mark_job_state(job_id=job_id, status="failed", error=str(exc))
                     except Exception:  # pragma: no cover - best effort only
                         logger.warning("Could not record failure state for job %s", job_id)
-                    partial_result.update({
-                        "status": "failed",
-                        "message": str(exc),
-                        "error_code": getattr(exc, "code", exc.__class__.__name__),
-                        "persistence_error": True,
-                    })
+                    partial_result.update(
+                        {
+                            "status": "failed",
+                            "message": str(exc),
+                            "error_code": getattr(exc, "code", exc.__class__.__name__),
+                            "persistence_error": True,
+                        }
+                    )
                     result.update(partial_result)
                     return partial_result
 
-                partial_result.update({
-                    "status": "completed",
-                    "translated_text": result_model.translated_text,
-                    "provider": result_model.provider,
-                    "model": result_model.model,
-                    "tokens_used": result_model.total_tokens,
-                    "latency_ms": result_model.latency_ms,
-                    "qa_score": quality_report.score,
-                    "qa_status": quality_report.status,
-                })
+                partial_result.update(
+                    {
+                        "status": "completed",
+                        "translated_text": result_model.translated_text,
+                        "provider": result_model.provider,
+                        "model": result_model.model,
+                        "tokens_used": result_model.total_tokens,
+                        "latency_ms": result_model.latency_ms,
+                        "qa_score": quality_report.score,
+                        "qa_status": quality_report.status,
+                    }
+                )
                 result.update(partial_result)
                 return partial_result
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # pragma: no cover - DB connectivity safety net for unit tests / watchdogs
+        except Exception as exc:  # pragma: no cover - DB connectivity safety net / watchdogs
             logger.warning("Translation job could not reach the database: %s", exc)
-            result.update({
-                "status": "failed",
-                "message": str(exc),
-                "error_code": exc.__class__.__name__,
-                "persistence_error": True,
-            })
+            result.update(
+                {
+                    "status": "failed",
+                    "message": str(exc),
+                    "error_code": exc.__class__.__name__,
+                    "persistence_error": True,
+                }
+            )
             if job_id is not None:
                 await self._mark_job_state(job_id=job_id, status="failed", error=str(exc))
             return result
@@ -404,27 +439,21 @@ class TranslatorWorker:
     async def _read_jobs(self) -> list[dict[str, Any]]:
         if self.redis is None:
             return []
-        stream_name = settings.translation_stream_name
-        group_name = settings.translation_consumer_group
-        consumer_name = settings.translation_consumer_name
         entries = await self.redis.xreadgroup(
-            group_name,
-            consumer_name,
-            {stream_name: ">"},
+            settings.translation_consumer_group,
+            settings.translation_consumer_name,
+            {settings.translation_stream_name: ">"},
             count=10,
             block=settings.translation_stream_block_ms,
         )
         results: list[dict[str, Any]] = []
         for _, message_list in entries or []:
             for message_id, payload in message_list:
-                job_data = {"id": message_id, "payload": payload}
-                job_payload = payload or {}
+                job_payload = dict(payload or {})
+                job_data: dict[str, Any] = {"id": message_id, "payload": job_payload}
                 try:
                     job_data["job_id"] = int(job_payload.get("job_id", 0) or 0)
                     job_data["segment_id"] = int(job_payload.get("segment_id", 0) or 0)
-                    job_data["provider"] = job_payload.get("provider") or settings.default_ai_provider
-                    job_data["source_language"] = job_payload.get("source_language") or settings.default_source_language
-                    job_data["target_language"] = job_payload.get("target_language") or settings.default_target_language
                 except (TypeError, ValueError):
                     job_data["job_id"] = 0
                     job_data["segment_id"] = 0
@@ -452,19 +481,24 @@ class TranslatorWorker:
 
         results: list[dict[str, Any]] = []
         for message_id, payload in entries:
-            job_payload = payload or {}
-            job_data = {"id": message_id, "payload": job_payload}
+            job_payload = dict(payload or {})
+            job_data: dict[str, Any] = {"id": message_id, "payload": job_payload}
             try:
                 job_data["job_id"] = int(job_payload.get("job_id", 0) or 0)
                 job_data["segment_id"] = int(job_payload.get("segment_id", 0) or 0)
-                job_data["provider"] = job_payload.get("provider") or settings.default_ai_provider
-                job_data["source_language"] = job_payload.get("source_language") or settings.default_source_language
-                job_data["target_language"] = job_payload.get("target_language") or settings.default_target_language
             except (TypeError, ValueError):
                 job_data["job_id"] = 0
                 job_data["segment_id"] = 0
             results.append(job_data)
         return results
+
+    async def _ack_message(self, message_id: str | None) -> None:
+        if self.redis is not None and message_id:
+            await self.redis.xack(
+                settings.translation_stream_name,
+                settings.translation_consumer_group,
+                message_id,
+            )
 
     async def run(self) -> None:
         logger.info("Starting translator worker")
@@ -489,18 +523,26 @@ class TranslatorWorker:
                     if not jobs:
                         await asyncio.sleep(0.5)
                         continue
+
                     for job in jobs:
-                        message_id = job["id"]
+                        message_id = str(job.get("id") or "")
                         payload = job.get("payload") or {}
-                        if not payload:
+                        durable_job_id = int(job.get("job_id") or 0)
+
+                        # A Redis message is only a pointer to a durable PostgreSQL job.
+                        # Malformed/legacy messages without that pointer must never trigger
+                        # an untracked paid provider call; discard them to avoid a poison PEL.
+                        if durable_job_id <= 0:
+                            logger.warning("Discarding translation stream message %s without a durable job id", message_id)
+                            await self._ack_message(message_id)
                             continue
+
                         try:
                             result = await self.process_translation_job(
                                 segment_id=int(job.get("segment_id") or 0),
-                                job_id=int(job.get("job_id") or 0) or None,
+                                job_id=durable_job_id,
                                 provider=payload.get("provider"),
-                                source_language=payload.get("source_language"),
-                                target_language=payload.get("target_language"),
+                                model=payload.get("model"),
                             )
                         except asyncio.CancelledError:
                             raise
@@ -509,9 +551,17 @@ class TranslatorWorker:
                             continue
 
                         should_ack = result.get("status") in {"completed", "failed"} and not result.get("persistence_error")
-                        if self.redis is not None and message_id and should_ack:
-                            await self.redis.xack(settings.translation_stream_name, settings.translation_consumer_group, message_id)
-                        logger.info("Completed job: %s", result)
+                        if should_ack:
+                            await self._ack_message(message_id)
+
+                        # Never log translated text or arbitrary provider/error payloads.
+                        logger.info(
+                            "Translation job finished job_id=%s segment_id=%s status=%s provider=%s",
+                            result.get("job_id"),
+                            result.get("segment_id"),
+                            result.get("status"),
+                            result.get("provider"),
+                        )
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:  # pragma: no cover - worker loop safety net
