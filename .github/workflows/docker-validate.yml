@@ -227,8 +227,16 @@ jobs:
 
         unauthenticated_redis="$(docker compose exec -T redis redis-cli ping 2>/dev/null || true)"
         test "$unauthenticated_redis" != "PONG"
-        authenticated_redis="$(docker compose exec -T redis sh -c 'redis-cli --no-auth-warning -a "$REDIS_PASSWORD" ping' | tr -d '\r')"
+        authenticated_redis="$(docker compose exec -T redis sh -c 'redis-cli --no-auth-warning -a \"$REDIS_PASSWORD\" ping' | tr -d '\r')"
         test "$authenticated_redis" = "PONG"
+
+        mounted_secret='test-only-mounted-jwt-secret-at-least-32-characters-long'
+        docker compose exec -T backend sh -c "printf '%s\n' '$mounted_secret' > /tmp/booktranslate-ci-jwt-secret && chmod 600 /tmp/booktranslate-ci-jwt-secret"
+        docker compose exec -T \
+          -e JWT_SECRET= \
+          -e JWT_SECRET_FILE=/tmp/booktranslate-ci-jwt-secret \
+          backend python -c "from app.core.config import settings; assert settings.jwt_secret == '$mounted_secret'; print('✓ mounted JWT secret loaded inside backend container')"
+        docker compose exec -T backend rm -f /tmp/booktranslate-ci-jwt-secret
 
         expected_head="$(docker compose exec -T backend python -c 'from app.db import _expected_alembic_heads; heads=sorted(_expected_alembic_heads()); assert len(heads) == 1, heads; print(heads[0])' | tr -d '\r')"
         migration_version="$({ docker compose exec -T postgres psql -U booktranslate -d booktranslate -Atc 'SELECT version_num FROM alembic_version;'; } | tr -d '\r')"
@@ -264,7 +272,7 @@ jobs:
           sleep 1
         done
 
-        echo "✓ clean production stack started; metrics require a dedicated token; stale schema produced 503; restoring head recovered readiness"
+        echo "✓ clean production stack started; mounted JWT secret loaded; metrics require a dedicated token; stale schema produced 503; restoring head recovered readiness"
 
     - name: Lint Dockerfiles
       run: |
