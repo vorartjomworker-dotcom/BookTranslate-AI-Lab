@@ -56,11 +56,12 @@ jobs:
       shell: python
       run: |
         import os
+        import secrets
         from pathlib import Path
 
         values = {
             "CI_DB_USER": "booktranslate",
-            "CI_DB_PASSWORD": "booktranslate-ci-password",
+            "CI_DB_PASSWORD": secrets.token_urlsafe(32),
             "CI_DB_NAME": "booktranslate_test",
         }
         env_file = Path(os.environ["GITHUB_ENV"])
