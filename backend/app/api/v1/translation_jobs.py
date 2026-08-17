@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query, status
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.roles import EDITOR_ROLES
 from app.dependencies.auth import get_current_user, require_roles
 from app.dependencies.db import get_db
-from app.models import Segment, TranslationJob, User
+from app.models import User
 from app.schemas.translation_job import TranslationJobCreate, TranslationJobRead
 from app.services.translation_job_service import TranslationJobService
 
