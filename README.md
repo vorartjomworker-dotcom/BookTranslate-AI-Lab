@@ -17,7 +17,9 @@ Implemented capabilities:
 - benchmark execution engine
 - Next.js operational workspace and translation editor
 - local email/password authentication with `viewer`, `editor`, and `admin` roles
-- Redis-backed login throttling and durable security audit trail
+- Redis-backed login throttling, durable PostgreSQL account lockout, and durable security audit trail
+- immediate server-side access-token revocation through per-user token versions
+- structured JSON HTTP request logging and optional protected Prometheus metrics
 - liveness/readiness endpoints and Docker Compose deployment validation
 - checksummed PostgreSQL/uploads backup helpers with CI-tested restore round trips
 
@@ -135,6 +137,15 @@ export TOKEN="<access_token>"
 
 Do not store access tokens in `.env`, files, or persistent shell configuration.
 
+To explicitly log out and invalidate all currently issued access tokens for that user:
+
+```bash
+curl -i -X POST "http://localhost:8000/api/v1/auth/logout" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+A successful logout returns `204 No Content`.
+
 ## Authentication and RBAC
 
 Passwords are hashed with Argon2id. JWT signing is HS256-only, `JWT_SECRET` is mandatory, and the configured secret must contain at least 32 characters.
@@ -162,15 +173,37 @@ Server-side authorization is the security boundary; hiding controls in the front
 - raw email addresses and IP addresses are not stored in Redis rate-limit keys; identifiers are HMAC-SHA256 derived using the application secret;
 - if Redis is unavailable, login throttling fails closed with `503` rather than silently bypassing protection.
 
-The rate limiter is request throttling, not a durable account-lockout system.
+This request-level limiter complements the durable account lockout below.
+
+### Durable account lockout
+
+Alembic migration `008` adds `failed_login_attempts` and `locked_until` to users. By default, 10 consecutive invalid passwords lock an account for 15 minutes. Existing-user authentication takes a row lock before changing the counters so concurrent failures cannot lose increments. A successful authentication clears prior failures, and expired locks recover automatically.
+
+The public authentication contract remains intentionally generic for unknown and locked accounts so lock state cannot be used as an account-enumeration signal. The threshold and duration are configurable with `LOGIN_LOCKOUT_THRESHOLD` and `LOGIN_LOCKOUT_MINUTES`.
+
+### Immediate access-token revocation
+
+Alembic migration `009` adds a non-negative per-user `token_version`. Newly issued access JWTs include that version in the `ver` claim; authentication rejects a JWT if its version no longer matches the current user record.
+
+`POST /api/v1/auth/logout` atomically increments `token_version`, immediately invalidating every previously issued access token for the authenticated user. Concurrent revocations use an atomic SQL increment so updates are not lost. Tokens issued before migration `009` without `ver` are treated as version `0` only for migration compatibility and are invalidated by the first revocation.
+
+The browser still clears its in-memory identity/workspace state even when the logout request cannot reach the server. Server revocation is therefore best-effort from the browser but authoritative whenever the request succeeds.
 
 ### Durable security audit trail
 
-Alembic migration `007` adds the durable `audit_events` table. Security-sensitive events include login success/failure/rate-limit/dependency failures, administrator user creation/update and last-admin denials, destructive book/chapter/segment deletion, and benchmark create/resume/cancel operations.
+Alembic migration `007` adds the durable `audit_events` table. Security-sensitive events include login success/failure/rate-limit/dependency failures, logout revocation, administrator user creation/update and last-admin denials, destructive book/chapter/segment deletion, and benchmark create/resume/cancel operations.
 
 Audit entries carry actor/action/outcome/target/request ID and safe structured details. Raw passwords, JWTs, email addresses, client IP addresses, and benchmark cancellation text are not copied into audit details; identity/source identifiers use HMAC-derived hashes where required.
 
 Administrators can read the append-only application audit feed through `/api/v1/admin/audit-events`.
+
+## Observability
+
+HTTP requests are emitted as structured JSON events with bounded metadata: request ID, method, path without query string, response status, and duration. Request bodies, headers, access tokens, client IP addresses, and query-string secrets are not copied into these events.
+
+Prometheus metrics are optional and disabled by default. When enabled, `/metrics` requires a separate `METRICS_BEARER_TOKEN` of at least 32 characters. HTTP counters and latency histograms use route templates rather than arbitrary raw paths to keep label cardinality bounded.
+
+Production deployments should forward these structured logs and metrics to their selected aggregation/monitoring systems rather than relying only on container-local output.
 
 ## Protected API example
 
@@ -257,6 +290,7 @@ The Docker Compose validation workflow verifies more than YAML syntax. It checks
 - a clean Docker deployment can build and start the production frontend/backend stack;
 - `/health/ready` succeeds at the current Alembic head;
 - forcing a stale Alembic revision makes readiness return `503` and restoring the current head recovers readiness;
+- protected metrics configuration is validated as part of the deployment smoke test;
 - Hadolint is a blocking Dockerfile gate for warning/error findings.
 
 The dedicated `Backup & Restore Validation` workflow additionally creates real PostgreSQL and uploads sentinel data, creates checksummed backups, proves destructive restores are guarded, restores PostgreSQL into an isolated database, validates the restored Alembic revision/data, restores the uploads volume, and confirms backend readiness afterward.
@@ -266,13 +300,12 @@ The dedicated `Backup & Restore Validation` workflow additionally creates real P
 The repository is an advanced MVP / pre-production platform, not a finished production deployment. Before public or high-value production use, remaining work includes at least:
 
 - GitHub branch protection/rulesets and required review/status gates;
-- durable account lockout policy if required by the deployment threat model;
+- independent PR review before promotion to production;
 - password reset/recovery workflow beyond administrator CLI recovery;
-- server-side session/token revocation if immediate revocation is required;
 - TLS for Redis traffic or a managed private Redis service for production deployments;
 - production secret management rather than local `.env` files;
 - production backup scheduling, off-host encrypted retention, monitoring, and PITR if required by RPO/RTO targets;
-- metrics, centralized structured logs, tracing, and alerting;
+- centralized log aggregation, distributed tracing, dashboards, and alerting;
 - multi-tenant isolation if the product will host independent organizations.
 
 The local Compose file keeps PostgreSQL and Redis reachable on localhost for development convenience. Production deployments should normally keep data services on private networks without host-published database/cache ports and should use encrypted transport where required.
