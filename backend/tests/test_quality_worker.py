@@ -123,7 +123,7 @@ async def test_worker_process_translation_job_detects_duplicate_completed_jobs(m
         async def __aexit__(self, exc_type, exc, tb):
             return False
 
-        async def get(self, model, key):
+        async def get(self, model, key, **_kwargs):
             if model.__name__ == "TranslationJob":
                 return type("Job", (), {"status": "completed"})()
             if model.__name__ == "Segment":
@@ -156,9 +156,20 @@ async def test_worker_process_translation_job_completes_successful_translation(m
         async def __aexit__(self, exc_type, exc, tb):
             return False
 
-        async def get(self, model, key):
+        async def get(self, model, key, **_kwargs):
             if model.__name__ == "TranslationJob":
-                return type("Job", (), {"status": "queued", "provider": "openai", "model": "gpt-4o"})()
+                return type(
+                    "Job",
+                    (),
+                    {
+                        "status": "queued",
+                        "provider": "openai",
+                        "model": "gpt-4o",
+                        "queued_at": None,
+                        "started_at": None,
+                        "error_message": None,
+                    },
+                )()
             if model.__name__ == "Segment":
                 return type(
                     "Segment",
