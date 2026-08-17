@@ -139,7 +139,11 @@ class Settings(BaseSettings):
     login_lockout_minutes: int = 15
     cors_allowed_origins: list[str] = ["http://localhost:3000", "http://localhost:3001"]
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        extra="ignore",
+        hide_input_in_errors=True,
+    )
 
     @field_validator("log_level")
     @classmethod
