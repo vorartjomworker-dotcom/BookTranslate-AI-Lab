@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 VALID_PROFILES = ("general", "technical", "literary", "academic")
 PROFILE_LITERAL = Literal["general", "technical", "literary", "academic"]
+MAX_TRANSLATED_TEXT_CHARS = 30_000
 
 
 class TranslationRequest(BaseModel):
@@ -102,6 +103,8 @@ class TranslationResult(BaseModel):
     def validate_translated_text(cls, value: str) -> str:
         if not value or not value.strip():
             raise ValueError("translated_text must not be empty")
+        if len(value) > MAX_TRANSLATED_TEXT_CHARS:
+            raise ValueError("translated_text exceeds supported maximum length")
         return value
 
     @property
