@@ -176,13 +176,21 @@ jobs:
         cleanup() {
           docker compose down -v --remove-orphans || true
         }
+        assert_security_headers() {
+          local headers_file="$1"
+          grep -Eiq '^x-content-type-options:[[:space:]]*nosniff\r?$' "$headers_file"
+          grep -Eiq '^referrer-policy:[[:space:]]*no-referrer\r?$' "$headers_file"
+          grep -Eiq '^x-frame-options:[[:space:]]*DENY\r?$' "$headers_file"
+          grep -Fqi 'permissions-policy: camera=(), microphone=(), geolocation=()' "$headers_file"
+          grep -Fqi "content-security-policy: object-src 'none'; base-uri 'self'; frame-ancestors 'none'" "$headers_file"
+        }
         trap cleanup EXIT
 
         docker compose down -v --remove-orphans || true
         docker compose up -d --build frontend
 
         for attempt in $(seq 1 60); do
-          if curl -fsS http://localhost:8000/health/ready >/tmp/booktranslate-health.json; then
+          if curl -fsS -D /tmp/booktranslate-backend-headers.txt -o /tmp/booktranslate-health.json http://localhost:8000/health/ready; then
             break
           fi
           if [ "$attempt" -eq 60 ]; then
@@ -195,6 +203,7 @@ jobs:
         done
 
         cat /tmp/booktranslate-health.json
+        assert_security_headers /tmp/booktranslate-backend-headers.txt
 
         metrics_unauth_status="$(curl -sS -o /tmp/booktranslate-metrics-unauth.json -w '%{http_code}' http://localhost:8000/metrics)"
         test "$metrics_unauth_status" = "401"
@@ -211,7 +220,7 @@ jobs:
         fi
 
         for attempt in $(seq 1 60); do
-          if curl -fsS http://localhost:3000/ >/tmp/booktranslate-frontend.html; then
+          if curl -fsS -D /tmp/booktranslate-frontend-headers.txt -o /tmp/booktranslate-frontend.html http://localhost:3000/; then
             break
           fi
           if [ "$attempt" -eq 60 ]; then
@@ -224,6 +233,7 @@ jobs:
         done
 
         test -s /tmp/booktranslate-frontend.html
+        assert_security_headers /tmp/booktranslate-frontend-headers.txt
 
         unauthenticated_redis="$(docker compose exec -T redis redis-cli ping 2>/dev/null || true)"
         test "$unauthenticated_redis" != "PONG"
@@ -272,7 +282,7 @@ jobs:
           sleep 1
         done
 
-        echo "✓ clean production stack started; mounted JWT secret loaded; metrics require a dedicated token; stale schema produced 503; restoring head recovered readiness"
+        echo "✓ clean production stack started; backend/frontend security headers present; mounted JWT secret loaded; metrics require a dedicated token; stale schema produced 503; restoring head recovered readiness"
 
     - name: Lint Dockerfiles
       run: |
