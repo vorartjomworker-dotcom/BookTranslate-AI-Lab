@@ -59,17 +59,26 @@ class AuthService:
         return user
 
     async def issue_tokens(self, user: User) -> tuple[str, int]:
-        return create_access_token(user.id), settings.jwt_expire_minutes * 60
+        return create_access_token(user.id, user.token_version), settings.jwt_expire_minutes * 60
+
+    async def revoke_all_access_tokens(self, user_id: int) -> int:
+        new_version = await self.repository.bump_token_version(user_id)
+        if new_version is None:
+            raise AuthenticationError("Invalid or expired token.")
+        return new_version
 
     async def get_user_from_access_token(self, access_token: str) -> User:
         try:
             payload = decode_access_token(access_token)
             user_id = int(payload["sub"])
+            token_version = payload["ver"]
         except (TokenError, ValueError, TypeError, KeyError) as exc:
             raise AuthenticationError("Invalid or expired token.") from exc
 
         user = await self.repository.get_by_id(user_id)
         if user is None:
+            raise AuthenticationError("Invalid or expired token.")
+        if token_version != user.token_version:
             raise AuthenticationError("Invalid or expired token.")
         if not user.is_active:
             raise AuthenticationError("This account is inactive.")
