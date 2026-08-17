@@ -26,6 +26,9 @@ jobs:
         python-version: ['3.12']
 
     steps:
+    - name: Configure Git default branch for clean checkout logs
+      run: git config --global init.defaultBranch main
+
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
     - name: Set up Python ${{ matrix.python-version }}
