@@ -2,6 +2,8 @@ services:
   frontend:
     build:
       context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
     environment:
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
     ports:
@@ -10,24 +12,47 @@ services:
       backend:
         condition: service_healthy
 
+  migrate:
+    build:
+      context: ./backend
+    command: alembic upgrade head
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://booktranslate:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/booktranslate}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-15}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
   backend:
     build:
       context: ./backend
     environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://booktranslate:booktranslate@postgres:5432/booktranslate}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://booktranslate:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/booktranslate}
+      REDIS_URL: ${REDIS_URL:-redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0}
+      REDIS_TLS_REQUIRED: ${REDIS_TLS_REQUIRED:-false}
       UPLOAD_DIR: ${UPLOAD_DIR:-/var/lib/booktranslate/uploads}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      METRICS_ENABLED: ${METRICS_ENABLED:-false}
+      METRICS_BEARER_TOKEN: ${METRICS_BEARER_TOKEN:-}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-15}
+      LOGIN_LOCKOUT_THRESHOLD: ${LOGIN_LOCKOUT_THRESHOLD:-10}
+      LOGIN_LOCKOUT_MINUTES: ${LOGIN_LOCKOUT_MINUTES:-15}
     ports:
       - "8000:8000"
     volumes:
       - uploads_data:/var/lib/booktranslate/uploads
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2)"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready', timeout=2)"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -37,9 +62,9 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-booktranslate}
       POSTGRES_USER: ${POSTGRES_USER:-booktranslate}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-booktranslate}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -50,12 +75,15 @@ services:
 
   redis:
     image: redis:7-alpine
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\""]
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -65,8 +93,9 @@ services:
       context: ./backend
     command: python -m app.workers.translator_worker
     environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://booktranslate:booktranslate@postgres:5432/booktranslate}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://booktranslate:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/booktranslate}
+      REDIS_URL: ${REDIS_URL:-redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@redis:6379/0}
+      REDIS_TLS_REQUIRED: ${REDIS_TLS_REQUIRED:-false}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       DEEPL_API_KEY: ${DEEPL_API_KEY:-}
@@ -77,11 +106,15 @@ services:
       TRANSLATION_DLQ_STREAM_NAME: ${TRANSLATION_DLQ_STREAM_NAME:-translation_jobs_dlq}
       TRANSLATION_CONSUMER_NAME: ${TRANSLATION_CONSUMER_NAME:-translator-worker-1}
       UPLOAD_DIR: ${UPLOAD_DIR:-/var/lib/booktranslate/uploads}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-15}
     volumes:
       - uploads_data:/var/lib/booktranslate/uploads
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     restart: on-failure

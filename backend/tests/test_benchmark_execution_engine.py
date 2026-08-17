@@ -16,13 +16,14 @@ from app.main import app
 
 
 @pytest.fixture
-def benchmark_client(async_session_factory):
+def benchmark_client(admin_client, async_session_factory):
     async def override_get_db() -> AsyncGenerator:
         async with async_session_factory() as session:
             yield session
 
     app.dependency_overrides[get_db] = override_get_db
     with TestClient(app) as client:
+        client.headers.update(admin_client.headers)
         yield client
     app.dependency_overrides.clear()
 

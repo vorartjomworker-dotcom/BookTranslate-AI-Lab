@@ -6,29 +6,311 @@ on:
     paths:
       - 'docker-compose.yml'
       - 'backend/Dockerfile'
+      - 'backend/.dockerignore'
+      - 'backend/requirements-runtime.txt'
+      - 'backend/alembic.ini'
+      - 'backend/alembic/**'
+      - 'backend/app/core/config.py'
+      - 'backend/app/core/redis_security.py'
+      - 'backend/app/main.py'
+      - 'backend/app/metrics.py'
+      - 'backend/app/observability.py'
       - 'frontend/Dockerfile'
+      - 'frontend/.dockerignore'
+      - 'frontend/package.json'
+      - 'frontend/package-lock.json'
+      - 'frontend/next.config.*'
       - '.github/workflows/docker-validate.yml'
   pull_request:
     branches: [ main, develop ]
     paths:
       - 'docker-compose.yml'
       - 'backend/Dockerfile'
+      - 'backend/.dockerignore'
+      - 'backend/requirements-runtime.txt'
+      - 'backend/alembic.ini'
+      - 'backend/alembic/**'
+      - 'backend/app/core/config.py'
+      - 'backend/app/core/redis_security.py'
+      - 'backend/app/main.py'
+      - 'backend/app/metrics.py'
+      - 'backend/app/observability.py'
       - 'frontend/Dockerfile'
+      - 'frontend/.dockerignore'
+      - 'frontend/package.json'
+      - 'frontend/package-lock.json'
+      - 'frontend/next.config.*'
+      - '.github/workflows/docker-validate.yml'
+
+permissions:
+  contents: read
 
 jobs:
   validate:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
     - name: Validate docker-compose.yml
       run: |
         pip install pyyaml
         python -c "import yaml; yaml.safe_load(open('docker-compose.yml')); print('✓ docker-compose.yml is valid YAML')"
 
-    - name: Check Dockerfile syntax
+    - name: Verify required Compose secrets
+      shell: bash
       run: |
-        docker run --rm -i hadolint/hadolint < backend/Dockerfile || true
-        docker run --rm -i hadolint/hadolint < frontend/Dockerfile || true
-      continue-on-error: true
+        set -euo pipefail
+
+        unset JWT_SECRET
+        export POSTGRES_PASSWORD='test-only-postgres-password-for-compose'
+        export REDIS_PASSWORD='test-only-redis-password-for-compose'
+        if docker compose config >/tmp/compose-without-jwt.out 2>/tmp/compose-without-jwt.err; then
+          echo "docker compose config unexpectedly succeeded without JWT_SECRET"
+          exit 1
+        fi
+        grep -q "JWT_SECRET is required" /tmp/compose-without-jwt.err
+
+        export JWT_SECRET='test-only-secret-for-compose-at-least-32-characters-long'
+        unset POSTGRES_PASSWORD
+        if docker compose config >/tmp/compose-without-db-password.out 2>/tmp/compose-without-db-password.err; then
+          echo "docker compose config unexpectedly succeeded without POSTGRES_PASSWORD"
+          exit 1
+        fi
+        grep -q "POSTGRES_PASSWORD is required" /tmp/compose-without-db-password.err
+
+        export POSTGRES_PASSWORD='test-only-postgres-password-for-compose'
+        unset REDIS_PASSWORD
+        if docker compose config >/tmp/compose-without-redis-password.out 2>/tmp/compose-without-redis-password.err; then
+          echo "docker compose config unexpectedly succeeded without REDIS_PASSWORD"
+          exit 1
+        fi
+        grep -q "REDIS_PASSWORD is required" /tmp/compose-without-redis-password.err
+
+        export REDIS_PASSWORD='test-only-redis-password-for-compose'
+        docker compose config >/dev/null
+        echo "✓ Compose rejects missing JWT_SECRET, POSTGRES_PASSWORD, and REDIS_PASSWORD and accepts explicit secrets"
+
+    - name: Verify backend healthcheck targets readiness endpoint
+      shell: bash
+      run: |
+        set -euo pipefail
+        python - <<'PY'
+        import yaml
+
+        with open("docker-compose.yml") as f:
+            compose = yaml.safe_load(f)
+
+        healthcheck = compose["services"]["backend"]["healthcheck"]
+        test_cmd = " ".join(healthcheck["test"])
+        assert "/health/ready" in test_cmd, f"backend healthcheck must target /health/ready, got: {test_cmd}"
+        print("✓ backend healthcheck targets /health/ready")
+        PY
+
+    - name: Verify migrations, Redis auth/TLS policy, and metrics configuration
+      shell: bash
+      run: |
+        set -euo pipefail
+        python - <<'PY'
+        import yaml
+
+        with open("docker-compose.yml") as f:
+            compose = yaml.safe_load(f)
+
+        services = compose["services"]
+        migrate = services.get("migrate")
+        assert migrate is not None, "Compose must define a migrate service"
+        assert migrate.get("command") == "alembic upgrade head", "migrate service must run alembic upgrade head"
+        assert "JWT_SECRET" in migrate.get("environment", {}), "migrate service must receive JWT_SECRET required by app settings"
+        assert migrate.get("depends_on", {}).get("postgres", {}).get("condition") == "service_healthy", "migrate must wait for healthy PostgreSQL"
+
+        for service_name in ("backend", "translator-worker"):
+            condition = services[service_name].get("depends_on", {}).get("migrate", {}).get("condition")
+            assert condition == "service_completed_successfully", (
+                f"{service_name} must wait for successful migrations, got: {condition!r}"
+            )
+            environment = services[service_name].get("environment", {})
+            redis_url = environment.get("REDIS_URL", "")
+            assert "REDIS_PASSWORD" in redis_url, f"{service_name} REDIS_URL must be derived from REDIS_PASSWORD"
+            assert "REDIS_TLS_REQUIRED" in environment, f"{service_name} must receive REDIS_TLS_REQUIRED"
+
+        backend_environment = services["backend"].get("environment", {})
+        assert "METRICS_ENABLED" in backend_environment, "backend must receive METRICS_ENABLED"
+        assert "METRICS_BEARER_TOKEN" in backend_environment, "backend must receive METRICS_BEARER_TOKEN"
+
+        redis_service = services["redis"]
+        assert "REDIS_PASSWORD" in redis_service.get("environment", {}), "Redis service must receive REDIS_PASSWORD"
+        redis_command = " ".join(redis_service.get("command", []))
+        assert "--requirepass" in redis_command, "Redis service must require authentication"
+
+        frontend_build_args = services["frontend"].get("build", {}).get("args", {})
+        assert "NEXT_PUBLIC_API_URL" in frontend_build_args, "frontend must receive NEXT_PUBLIC_API_URL at build time"
+
+        print("✓ migrations gate backend/worker; Redis authentication/TLS policy and protected metrics configuration are wired")
+        PY
+
+    - name: Verify Docker build contexts exclude local secrets and caches
+      shell: bash
+      run: |
+        set -euo pipefail
+        for ignore_file in backend/.dockerignore frontend/.dockerignore; do
+          test -f "$ignore_file"
+          grep -Fxq '.env' "$ignore_file"
+        done
+        grep -Fxq '.venv' backend/.dockerignore
+        grep -Fxq 'node_modules' frontend/.dockerignore
+        grep -Fxq '.next' frontend/.dockerignore
+        echo "✓ Docker build contexts exclude local secrets and generated dependency/build directories"
+
+    - name: Fresh Docker deployment smoke test
+      shell: bash
+      env:
+        JWT_SECRET: test-only-secret-for-clean-compose-smoke-at-least-32-characters-long
+        POSTGRES_PASSWORD: test-only-postgres-password-for-clean-compose-smoke
+        REDIS_PASSWORD: test-only-redis-password-for-clean-compose-smoke
+        METRICS_ENABLED: 'true'
+        METRICS_BEARER_TOKEN: test-only-metrics-token-for-clean-compose-smoke-0123456789
+      run: |
+        set -euo pipefail
+
+        cleanup() {
+          docker compose down -v --remove-orphans || true
+        }
+        assert_security_headers() {
+          local headers_file="$1"
+          python - "$headers_file" <<'PY'
+        import sys
+        from pathlib import Path
+
+        path = Path(sys.argv[1])
+        raw_text = path.read_text(errors="replace")
+        headers: dict[str, str] = {}
+        for raw_line in raw_text.splitlines():
+            if ":" not in raw_line:
+                continue
+            name, value = raw_line.split(":", 1)
+            headers[name.strip().lower()] = value.strip()
+
+        expected = {
+            "x-content-type-options": "nosniff",
+            "referrer-policy": "no-referrer",
+            "x-frame-options": "DENY",
+            "permissions-policy": "camera=(), microphone=(), geolocation=()",
+            "content-security-policy": "object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
+        }
+        mismatches = {
+            name: {"expected": value, "actual": headers.get(name)}
+            for name, value in expected.items()
+            if headers.get(name) != value
+        }
+        if mismatches:
+            print(f"security header mismatch in {path}: {mismatches}", file=sys.stderr)
+            print("--- captured response headers ---", file=sys.stderr)
+            print(raw_text, file=sys.stderr)
+            raise SystemExit(1)
+        PY
+        }
+        trap cleanup EXIT
+
+        docker compose down -v --remove-orphans || true
+        docker compose up -d --build frontend
+
+        for attempt in $(seq 1 60); do
+          if curl -fsS -D /tmp/booktranslate-backend-headers.txt -o /tmp/booktranslate-health.json http://localhost:8000/health/ready; then
+            break
+          fi
+          if [ "$attempt" -eq 60 ]; then
+            echo "backend did not become ready after clean deployment"
+            docker compose ps -a
+            docker compose logs --no-color migrate backend postgres redis frontend
+            exit 1
+          fi
+          sleep 2
+        done
+
+        cat /tmp/booktranslate-health.json
+        assert_security_headers /tmp/booktranslate-backend-headers.txt
+
+        metrics_unauth_status="$(curl -sS -o /tmp/booktranslate-metrics-unauth.json -w '%{http_code}' http://localhost:8000/metrics)"
+        test "$metrics_unauth_status" = "401"
+        grep -qi 'Bearer' <(curl -sSI -H 'Authorization: invalid' http://localhost:8000/metrics || true) || true
+
+        curl -fsS \
+          -H "Authorization: Bearer $METRICS_BEARER_TOKEN" \
+          http://localhost:8000/metrics >/tmp/booktranslate-metrics.prom
+        grep -q '^# HELP booktranslate_http_requests_total ' /tmp/booktranslate-metrics.prom
+        grep -q '^# HELP booktranslate_http_request_duration_seconds ' /tmp/booktranslate-metrics.prom
+        if grep -Fq "$METRICS_BEARER_TOKEN" /tmp/booktranslate-metrics.prom; then
+          echo "metrics bearer token leaked into Prometheus output"
+          exit 1
+        fi
+
+        for attempt in $(seq 1 60); do
+          if curl -fsS -D /tmp/booktranslate-frontend-headers.txt -o /tmp/booktranslate-frontend.html http://localhost:3000/; then
+            break
+          fi
+          if [ "$attempt" -eq 60 ]; then
+            echo "production frontend did not become reachable after clean deployment"
+            docker compose ps -a
+            docker compose logs --no-color frontend backend
+            exit 1
+          fi
+          sleep 2
+        done
+
+        test -s /tmp/booktranslate-frontend.html
+        assert_security_headers /tmp/booktranslate-frontend-headers.txt
+
+        unauthenticated_redis="$(docker compose exec -T redis redis-cli ping 2>/dev/null || true)"
+        test "$unauthenticated_redis" != "PONG"
+        authenticated_redis="$(docker compose exec -T redis sh -c 'REDISCLI_AUTH=$REDIS_PASSWORD redis-cli ping' | tr -d '\r')"
+        test "$authenticated_redis" = "PONG"
+
+        mounted_secret='test-only-mounted-jwt-secret-at-least-32-characters-long'
+        docker compose exec -T backend sh -c "printf '%s\n' '$mounted_secret' > /tmp/booktranslate-ci-jwt-secret && chmod 600 /tmp/booktranslate-ci-jwt-secret"
+        docker compose exec -T \
+          -e JWT_SECRET= \
+          -e JWT_SECRET_FILE=/tmp/booktranslate-ci-jwt-secret \
+          backend python -c "from app.core.config import settings; assert settings.jwt_secret == '$mounted_secret'; print('✓ mounted JWT secret loaded inside backend container')"
+        docker compose exec -T backend rm -f /tmp/booktranslate-ci-jwt-secret
+
+        expected_head="$(docker compose exec -T backend python -c 'from app.db import _expected_alembic_heads; heads=sorted(_expected_alembic_heads()); assert len(heads) == 1, heads; print(heads[0])' | tr -d '\r')"
+        migration_version="$({ docker compose exec -T postgres psql -U booktranslate -d booktranslate -Atc 'SELECT version_num FROM alembic_version;'; } | tr -d '\r')"
+        test "$migration_version" = "$expected_head"
+
+        users_table="$({ docker compose exec -T postgres psql -U booktranslate -d booktranslate -Atc "SELECT to_regclass('public.users');"; } | tr -d '\r')"
+        test "$users_table" = "users"
+
+        docker compose exec -T postgres psql -U booktranslate -d booktranslate -v ON_ERROR_STOP=1 -c "UPDATE alembic_version SET version_num = 'stale-test-revision';" >/dev/null
+
+        stale_status=""
+        for attempt in $(seq 1 10); do
+          stale_status="$(curl -sS -o /tmp/booktranslate-stale-health.json -w '%{http_code}' http://localhost:8000/health/ready || true)"
+          if [ "$stale_status" = "503" ]; then
+            break
+          fi
+          sleep 1
+        done
+        test "$stale_status" = "503"
+        cat /tmp/booktranslate-stale-health.json
+
+        docker compose exec -T postgres psql -U booktranslate -d booktranslate -v ON_ERROR_STOP=1 -c "UPDATE alembic_version SET version_num = '$expected_head';" >/dev/null
+
+        for attempt in $(seq 1 10); do
+          if curl -fsS http://localhost:8000/health/ready >/tmp/booktranslate-restored-health.json; then
+            break
+          fi
+          if [ "$attempt" -eq 10 ]; then
+            echo "backend did not recover readiness after restoring Alembic head"
+            cat /tmp/booktranslate-stale-health.json || true
+            exit 1
+          fi
+          sleep 1
+        done
+
+        echo "✓ clean production stack started; backend/frontend security headers present; mounted JWT secret loaded; metrics require a dedicated token; stale schema produced 503; restoring head recovered readiness"
+
+    - name: Lint Dockerfiles
+      run: |
+        docker run --rm -i hadolint/hadolint@sha256:32dac94127fd60b7b7e3fbfc65e1383b9b5e25c9bfd7b8536de7a539fe68a12d hadolint --failure-threshold warning - < backend/Dockerfile
+        docker run --rm -i hadolint/hadolint@sha256:32dac94127fd60b7b7e3fbfc65e1383b9b5e25c9bfd7b8536de7a539fe68a12d hadolint --failure-threshold warning - < frontend/Dockerfile

@@ -31,7 +31,14 @@ async def test_worker_run_acks_completed_jobs(monkeypatch):
 
     async def fake_read_jobs():
         worker.should_exit = True
-        return [{"id": "msg-1", "payload": {"job_id": "1", "segment_id": "1", "provider": "openai"}}]
+        return [
+            {
+                "id": "msg-1",
+                "job_id": 1,
+                "segment_id": 1,
+                "payload": {"job_id": "1", "segment_id": "1", "provider": "openai"},
+            }
+        ]
 
     async def fake_reclaim_stale_jobs():
         return []
@@ -62,7 +69,14 @@ async def test_worker_run_does_not_ack_persistence_error(monkeypatch):
 
     async def fake_read_jobs():
         worker.should_exit = True
-        return [{"id": "msg-2", "payload": {"job_id": "2", "segment_id": "2", "provider": "openai"}}]
+        return [
+            {
+                "id": "msg-2",
+                "job_id": 2,
+                "segment_id": 2,
+                "payload": {"job_id": "2", "segment_id": "2", "provider": "openai"},
+            }
+        ]
 
     async def fake_reclaim_stale_jobs():
         return []
@@ -93,7 +107,14 @@ async def test_worker_run_propagates_cancelled_error(monkeypatch):
 
     async def fake_read_jobs():
         worker.should_exit = True
-        return [{"id": "msg-3", "payload": {"job_id": "3", "segment_id": "3", "provider": "openai"}}]
+        return [
+            {
+                "id": "msg-3",
+                "job_id": 3,
+                "segment_id": 3,
+                "payload": {"job_id": "3", "segment_id": "3", "provider": "openai"},
+            }
+        ]
 
     async def fake_process(*args, **kwargs):
         raise asyncio.CancelledError()
@@ -123,7 +144,7 @@ async def test_worker_process_translation_job_detects_duplicate_completed_jobs(m
         async def __aexit__(self, exc_type, exc, tb):
             return False
 
-        async def get(self, model, key):
+        async def get(self, model, key, **_kwargs):
             if model.__name__ == "TranslationJob":
                 return type("Job", (), {"status": "completed"})()
             if model.__name__ == "Segment":
@@ -156,9 +177,20 @@ async def test_worker_process_translation_job_completes_successful_translation(m
         async def __aexit__(self, exc_type, exc, tb):
             return False
 
-        async def get(self, model, key):
+        async def get(self, model, key, **_kwargs):
             if model.__name__ == "TranslationJob":
-                return type("Job", (), {"status": "queued", "provider": "openai", "model": "gpt-4o"})()
+                return type(
+                    "Job",
+                    (),
+                    {
+                        "status": "queued",
+                        "provider": "openai",
+                        "model": "gpt-4o",
+                        "queued_at": None,
+                        "started_at": None,
+                        "error_message": None,
+                    },
+                )()
             if model.__name__ == "Segment":
                 return type(
                     "Segment",

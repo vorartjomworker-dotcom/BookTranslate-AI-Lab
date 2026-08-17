@@ -11,12 +11,14 @@ class APIError(Exception):
         code: str,
         http_status: int = 500,
         details: Mapping[str, Any] | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> None:
         super().__init__(message)
         self.message = message
         self.code = code
         self.http_status = http_status
         self.details = dict(details or {})
+        self.headers = dict(headers or {})
 
     def to_dict(self, request_id: str | None = None) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -58,6 +60,40 @@ class ValidationError(APIError):
             message,
             code="validation_error",
             http_status=422,
+            details=details or {},
+        )
+
+
+class AuthenticationError(APIError):
+    def __init__(
+        self,
+        message: str = "Authentication required.",
+        *,
+        details: Mapping[str, Any] | None = None,
+        bearer_challenge: bool = False,
+    ) -> None:
+        super().__init__(
+            message,
+            code="unauthorized",
+            http_status=401,
+            details=details or {},
+            headers={"WWW-Authenticate": "Bearer"} if bearer_challenge else None,
+        )
+
+
+class AccountLockedError(AuthenticationError):
+    """Internal authentication signal; public response intentionally matches invalid credentials."""
+
+    def __init__(self) -> None:
+        super().__init__("Invalid email or password.")
+
+
+class AuthorizationError(APIError):
+    def __init__(self, message: str = "You do not have permission to perform this action.", *, details: Mapping[str, Any] | None = None) -> None:
+        super().__init__(
+            message,
+            code="forbidden",
+            http_status=403,
             details=details or {},
         )
 

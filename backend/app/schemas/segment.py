@@ -4,6 +4,12 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.ai.types import MAX_TRANSLATED_TEXT_CHARS
+from app.core.config import settings
+
+
+MAX_SEGMENT_SOURCE_CHARS = settings.segment_hard_limit_chars
+
 
 class SegmentBase(BaseModel):
     segment_number: int = Field(..., ge=1)
@@ -23,13 +29,14 @@ class SegmentBase(BaseModel):
 
 
 class SegmentCreate(SegmentBase):
-    pass
+    original_text: str = Field(..., min_length=1, max_length=MAX_SEGMENT_SOURCE_CHARS)
+    translated_text: str | None = Field(default=None, max_length=MAX_TRANSLATED_TEXT_CHARS)
 
 
 class SegmentUpdate(BaseModel):
     segment_number: Optional[int] = Field(default=None, ge=1)
-    original_text: Optional[str] = Field(default=None, min_length=1)
-    translated_text: Optional[str] = None
+    original_text: Optional[str] = Field(default=None, min_length=1, max_length=MAX_SEGMENT_SOURCE_CHARS)
+    translated_text: Optional[str] = Field(default=None, max_length=MAX_TRANSLATED_TEXT_CHARS)
     confidence: Optional[float] = Field(default=None, ge=0.0)
     model_used: Optional[str] = Field(default=None, max_length=100)
     status: Optional[str] = Field(default=None, min_length=1, max_length=50)
@@ -44,7 +51,7 @@ class SegmentUpdate(BaseModel):
 
 
 class SegmentTranslationUpdate(BaseModel):
-    translated_text: str | None = Field(...)
+    translated_text: str | None = Field(..., max_length=MAX_TRANSLATED_TEXT_CHARS)
 
     model_config = ConfigDict(from_attributes=True, extra="forbid")
 

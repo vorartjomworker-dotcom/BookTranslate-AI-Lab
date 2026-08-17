@@ -1,13 +1,75 @@
+import os
+from collections.abc import Mapping
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from pydantic import ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+_SECRET_FILE_FIELDS: dict[str, str] = {
+    "JWT_SECRET": "jwt_secret",
+    "DATABASE_URL": "database_url",
+    "REDIS_URL": "redis_url",
+    "METRICS_BEARER_TOKEN": "metrics_bearer_token",
+    "OPENAI_API_KEY": "openai_api_key",
+    "ANTHROPIC_API_KEY": "anthropic_api_key",
+    "DEEPL_API_KEY": "deepl_api_key",
+}
+_MAX_SECRET_FILE_BYTES = 64 * 1024
+_LOOPBACK_CORS_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
+
+def _read_secret_file_values(environ: Mapping[str, str] | None = None) -> dict[str, str]:
+    """Resolve supported ``*_FILE`` environment variables without exposing secret values.
+
+    Direct environment values and file-backed values are intentionally mutually exclusive.
+    This avoids ambiguous precedence during production secret rotation and makes accidental
+    fallback to a stale plaintext environment value fail closed.
+    """
+    source = os.environ if environ is None else environ
+    values: dict[str, str] = {}
+
+    for env_name, field_name in _SECRET_FILE_FIELDS.items():
+        file_env_name = f"{env_name}_FILE"
+        file_path_value = source.get(file_env_name, "").strip()
+        if not file_path_value:
+            continue
+
+        if source.get(env_name, "").strip():
+            raise RuntimeError(f"{env_name} and {file_env_name} cannot both be set")
+
+        path = Path(file_path_value)
+        try:
+            stat = path.stat()
+        except OSError as exc:
+            raise RuntimeError(f"{file_env_name} could not be read") from exc
+
+        if not path.is_file():
+            raise RuntimeError(f"{file_env_name} must reference a regular file")
+        if stat.st_size > _MAX_SECRET_FILE_BYTES:
+            raise RuntimeError(f"{file_env_name} exceeds the maximum supported secret size")
+
+        try:
+            value = path.read_text(encoding="utf-8").rstrip("\r\n")
+        except (OSError, UnicodeError) as exc:
+            raise RuntimeError(f"{file_env_name} could not be read") from exc
+
+        if not value:
+            raise RuntimeError(f"{file_env_name} references an empty secret")
+        values[field_name] = value
+
+    return values
+
+
 class Settings(BaseSettings):
     app_name: str = "BookTranslate AI Lab"
+    log_level: str = "INFO"
+    metrics_enabled: bool = False
+    metrics_bearer_token: str = ""
     database_url: str = "postgresql+asyncpg://booktranslate:booktranslate@postgres:5432/booktranslate"
     redis_url: str = "redis://redis:6379/0"
+    redis_tls_required: bool = False
 
     upload_dir: str = "uploads"
     max_upload_size_mb: int = 25
@@ -71,7 +133,95 @@ class Settings(BaseSettings):
     benchmark_dataset_name: str = "technical_translation"
     benchmark_dataset_version: str = "2026.08.15"
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    jwt_secret: str
+    jwt_algorithm: str = "HS256"
+    jwt_expire_minutes: int = 15
+    login_lockout_threshold: int = 10
+    login_lockout_minutes: int = 15
+    cors_allowed_origins: list[str] = ["http://localhost:3000", "http://localhost:3001"]
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        extra="ignore",
+        hide_input_in_errors=True,
+    )
+
+    @field_validator("log_level")
+    @classmethod
+    def validate_log_level(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        allowed = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+        if normalized not in allowed:
+            raise ValueError("log_level must be one of: DEBUG, INFO, WARNING, ERROR, CRITICAL")
+        return normalized
+
+    @field_validator("metrics_bearer_token")
+    @classmethod
+    def normalize_metrics_bearer_token(cls, value: str) -> str:
+        return value.strip()
+
+    @model_validator(mode="after")
+    def validate_metrics_security(self) -> "Settings":
+        if self.metrics_enabled and len(self.metrics_bearer_token) < 32:
+            raise ValueError("metrics_bearer_token must contain at least 32 characters when metrics are enabled")
+        return self
+
+    @field_validator("redis_url")
+    @classmethod
+    def validate_redis_url(cls, value: str) -> str:
+        redis_url = value.strip()
+        try:
+            parsed = urlsplit(redis_url)
+        except ValueError as exc:
+            raise ValueError("redis_url must be a valid redis:// or rediss:// URL") from exc
+
+        if parsed.scheme.lower() not in {"redis", "rediss"} or not parsed.hostname:
+            raise ValueError("redis_url must use redis:// or rediss:// and include a host")
+        return redis_url
+
+    @model_validator(mode="after")
+    def validate_redis_transport_security(self) -> "Settings":
+        if self.redis_tls_required and urlsplit(self.redis_url).scheme.lower() != "rediss":
+            raise ValueError("redis_url must use rediss:// when redis_tls_required is enabled")
+        return self
+
+    @field_validator("cors_allowed_origins")
+    @classmethod
+    def validate_cors_allowed_origins(cls, value: list[str]) -> list[str]:
+        if not value:
+            raise ValueError("cors_allowed_origins must contain at least one exact origin")
+
+        normalized: list[str] = []
+        seen: set[tuple[str, str, int | None]] = set()
+        for raw_origin in value:
+            origin = raw_origin.strip()
+            if not origin or origin.lower() == "null" or "*" in origin:
+                raise ValueError("cors_allowed_origins must contain exact http(s) origins without wildcards")
+
+            try:
+                parsed = urlsplit(origin)
+                port = parsed.port
+            except ValueError as exc:
+                raise ValueError("cors_allowed_origins contains an invalid origin") from exc
+
+            scheme = parsed.scheme.lower()
+            hostname = (parsed.hostname or "").lower()
+            if scheme not in {"http", "https"} or not hostname:
+                raise ValueError("cors_allowed_origins must use http:// or https:// and include a host")
+            if parsed.username is not None or parsed.password is not None:
+                raise ValueError("cors_allowed_origins must not contain user information")
+            if parsed.path or parsed.query or parsed.fragment:
+                raise ValueError("cors_allowed_origins must not contain a path, query string, or fragment")
+            if scheme == "http" and hostname not in _LOOPBACK_CORS_HOSTS:
+                raise ValueError("non-loopback cors_allowed_origins must use https://")
+
+            key = (scheme, hostname, port)
+            if key in seen:
+                raise ValueError("cors_allowed_origins must not contain duplicate origins")
+            seen.add(key)
+            normalized.append(origin)
+
+        return normalized
 
     @field_validator("default_ai_provider")
     @classmethod
@@ -103,7 +253,13 @@ class Settings(BaseSettings):
             raise ValueError("translation_job_retry_limit must be >= 0")
         return value
 
-    @field_validator("translation_stream_block_ms", "translation_job_timeout_seconds", "translation_job_max_stale_ms")
+    @field_validator(
+        "translation_stream_block_ms",
+        "translation_job_timeout_seconds",
+        "translation_job_max_stale_ms",
+        "login_lockout_threshold",
+        "login_lockout_minutes",
+    )
     @classmethod
     def validate_positive_ints(cls, value: int, info: ValidationInfo) -> int:
         if value <= 0:
@@ -146,9 +302,36 @@ class Settings(BaseSettings):
             raise ValueError("quality deterministic and AI weights must sum to 1")
         return self
 
+    @field_validator("jwt_secret")
+    @classmethod
+    def validate_jwt_secret(cls, value: str) -> str:
+        secret = value.strip()
+        if len(secret) < 32:
+            raise ValueError("jwt_secret must contain at least 32 characters")
+        return secret
+
+    @field_validator("jwt_algorithm")
+    @classmethod
+    def validate_jwt_algorithm(cls, value: str) -> str:
+        algorithm = value.strip().upper()
+        if algorithm != "HS256":
+            raise ValueError("jwt_algorithm must be HS256")
+        return algorithm
+
+    @field_validator("jwt_expire_minutes")
+    @classmethod
+    def validate_auth_durations(cls, value: int, info: ValidationInfo) -> int:
+        if value <= 0:
+            raise ValueError(f"{info.field_name} must be greater than 0")
+        return value
+
     @property
     def upload_dir_path(self) -> Path:
         return Path(self.upload_dir)
 
 
-settings = Settings()
+def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
+    return Settings(**_read_secret_file_values(environ))
+
+
+settings = load_settings()

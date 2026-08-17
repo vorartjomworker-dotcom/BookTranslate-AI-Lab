@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
-from typing import Any
 
 from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.config import settings
+from app.core.time import utc_now_naive
 from app.db import async_session_factory
 from app.models import TranslationJob
 from app.translation_queue.redis_stream import RedisStreamQueue
@@ -64,6 +63,10 @@ class TranslationJobDispatcher:
 
             try:
                 await queue.ensure_consumer_group()
+                # Keep the whole selected batch transaction open until every selected row
+                # has either been published or deliberately left pending. Committing inside
+                # this loop would release FOR UPDATE locks for the *remaining* rows and let
+                # a second dispatcher publish those same jobs concurrently.
                 for job in jobs:
                     if job.status != "pending_enqueue":
                         continue
@@ -78,14 +81,20 @@ class TranslationJobDispatcher:
                         )
                     except Exception as exc:  # pragma: no cover - Redis outage is handled by retrying later
                         logger.warning("Could not dispatch translation job %s to Redis: %s", job.id, exc)
-                        await session.rollback()
+                        # Redis failures do not invalidate the database transaction. Leave
+                        # this row unchanged so a later dispatcher attempt can retry it while
+                        # preserving locks on the rest of the current batch.
                         continue
 
                     job.stream_message_id = message_id
                     job.status = "queued"
-                    job.queued_at = job.queued_at or datetime.utcnow()
-                    await session.commit()
+                    job.queued_at = job.queued_at or utc_now_naive()
                     published += 1
+
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
             finally:
                 if owns_redis and redis_client is not None:
                     await redis_client.aclose()

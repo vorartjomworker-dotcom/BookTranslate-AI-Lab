@@ -1,0 +1,23 @@
+# Version-control and local environment metadata
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+
+# Installed/build output must be created inside the image
+node_modules
+.next
+out
+coverage
+
+# Test/editor caches and logs
+*.log
+.vitest
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+
+# Local TypeScript incremental state
+*.tsbuildinfo

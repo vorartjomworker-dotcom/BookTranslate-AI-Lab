@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.models import Segment, TranslationJob
 from app.workers.translator_worker import TranslatorWorker
 
 
@@ -100,7 +101,7 @@ async def test_process_translation_job_uses_default_ai_provider(monkeypatch):
             if model.__name__ == "Segment":
                 return type("Segment", (), {"original_text": "hello", "translated_text": None, "status": "pending", "model_used": None, "confidence": None, "tokens_used": None, "latency_ms": None, "qa_score": 0, "qa_status": "pending", "qa_comment": ""})()
             if model.__name__ == "TranslationJob":
-                return type("TranslationJob", (), {"status": "queued", "error_message": None, "error_code": None, "completed_at": None, "failed_at": None})()
+                return type("TranslationJob", (), {"status": "running", "error_message": None, "error_code": None, "completed_at": None, "failed_at": None})()
             return None
 
         async def commit(self):
@@ -110,10 +111,62 @@ async def test_process_translation_job_uses_default_ai_provider(monkeypatch):
         def __call__(self):
             return FakeSession()
 
+    async def claim_job(_job_id: int) -> str:
+        return "claimed"
+
     monkeypatch.setattr("app.workers.translator_worker.async_session_factory", FakeSessionFactory())
     monkeypatch.setattr("app.workers.translator_worker.TranslationService", lambda settings_obj: FakeService())
+    monkeypatch.setattr(worker, "_claim_job_for_processing", claim_job)
 
     result = await worker.process_translation_job(segment_id=10, job_id=20)
 
     assert result["status"] == "completed"
     assert result["provider"] == "openai"
+
+
+@pytest.mark.asyncio
+async def test_completed_duplicate_job_never_reopens_or_calls_provider(async_session_factory, monkeypatch):
+    async with async_session_factory() as session:
+        segment = Segment(
+            chapter_id=1,
+            segment_number=91,
+            original_text="already translated source",
+            translated_text="already translated",
+            status="translated",
+            qa_score=97,
+            qa_status="pass",
+        )
+        session.add(segment)
+        await session.commit()
+        await session.refresh(segment)
+
+        job = TranslationJob(
+            segment_id=segment.id,
+            provider="openai",
+            model="gpt-4o",
+            status="completed",
+            attempt=0,
+            max_attempts=3,
+        )
+        session.add(job)
+        await session.commit()
+        await session.refresh(job)
+        segment_id = segment.id
+        job_id = job.id
+
+    def fail_if_provider_is_constructed(*args, **kwargs):
+        raise AssertionError("duplicate completed job must not call the AI provider")
+
+    monkeypatch.setattr("app.workers.translator_worker.async_session_factory", async_session_factory)
+    monkeypatch.setattr("app.workers.translator_worker.TranslationService", fail_if_provider_is_constructed)
+
+    result = await TranslatorWorker().process_translation_job(segment_id=segment_id, job_id=job_id)
+
+    assert result["status"] == "completed"
+    assert result["duplicate"] is True
+    assert result["qa_score"] == 97
+
+    async with async_session_factory() as session:
+        reloaded = await session.get(TranslationJob, job_id)
+        assert reloaded is not None
+        assert reloaded.status == "completed"

@@ -13,13 +13,14 @@ from app.quality.service import QualityAssuranceService
 
 
 @pytest.fixture
-def quality_client(async_session_factory):
+def quality_client(editor_client, async_session_factory):
     async def override_get_db() -> AsyncGenerator:
         async with async_session_factory() as session:
             yield session
 
     app.dependency_overrides[get_db] = override_get_db
     with TestClient(app) as client:
+        client.headers.update(editor_client.headers)
         yield client
     app.dependency_overrides.clear()
 

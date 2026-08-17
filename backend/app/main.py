@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
-from typing import Any
+from secrets import compare_digest
+from time import perf_counter
+from typing import Any, Awaitable, Callable
 from uuid import uuid4
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -13,13 +16,49 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.exceptions import APIError, ConflictError, NotFoundError, PayloadTooLargeError, UnsupportedMediaTypeError
-from app.db import check_database
+from app.db import check_database, close_database
+from app.metrics import observe_http_request, render_metrics, route_template
+from app.observability import log_http_request
 from app.redis_client import check_redis
+
+
+_SERIALIZER_MANAGED_HEADERS = {"content-length", "content-type"}
+_BASE_SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "X-Frame-Options": "DENY",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+    "Content-Security-Policy": "object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
+}
+
+
+def _exception_response_headers(headers: dict[str, str] | None) -> dict[str, str]:
+    return {
+        name: value
+        for name, value in (headers or {}).items()
+        if name.lower() not in _SERIALIZER_MANAGED_HEADERS
+    }
+
+
+def _safe_validation_errors(exc: RequestValidationError) -> list[dict[str, Any]]:
+    """Expose useful validation metadata without reflecting request values or validator context."""
+    errors: list[dict[str, Any]] = []
+    for error in exc.errors():
+        safe_error: dict[str, Any] = {
+            "type": error.get("type", "validation_error"),
+            "loc": list(error.get("loc", ())),
+            "msg": error.get("msg", "Invalid value."),
+        }
+        errors.append(safe_error)
+    return errors
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    yield
+    try:
+        yield
+    finally:
+        await close_database()
 
 
 app = FastAPI(
@@ -34,41 +73,63 @@ app = FastAPI(
 async def add_request_id(request: Request, call_next):
     request_id = uuid4().hex
     request.state.request_id = request_id
+    started = perf_counter()
+    response = None
     try:
-        response = await call_next(request)
-    except Exception as exc:
-        if isinstance(exc, RequestValidationError):
-            handler = app.exception_handlers.get(RequestValidationError)
-            if handler is not None:
-                response = await handler(request, exc)
+        try:
+            response = await call_next(request)
+        except Exception as exc:
+            if isinstance(exc, RequestValidationError):
+                handler = app.exception_handlers.get(RequestValidationError)
+                if handler is not None:
+                    response = await handler(request, exc)
+                else:
+                    response = JSONResponse(status_code=422, content={"code": "validation_error", "message": "Validation error.", "details": {}, "request_id": request_id})
+            elif isinstance(exc, NotFoundError):
+                handler = app.exception_handlers.get(NotFoundError)
+                if handler is not None:
+                    response = await handler(request, exc)
+                else:
+                    response = JSONResponse(status_code=404, content=exc.to_dict(request_id))
+            elif isinstance(exc, ConflictError):
+                handler = app.exception_handlers.get(ConflictError)
+                if handler is not None:
+                    response = await handler(request, exc)
+                else:
+                    response = JSONResponse(status_code=409, content=exc.to_dict(request_id))
             else:
-                response = JSONResponse(status_code=422, content={"code": "validation_error", "message": "Validation error.", "details": {}, "request_id": request_id})
-        elif isinstance(exc, NotFoundError):
-            handler = app.exception_handlers.get(NotFoundError)
-            if handler is not None:
-                response = await handler(request, exc)
-            else:
-                response = JSONResponse(status_code=404, content=exc.to_dict(request_id))
-        elif isinstance(exc, ConflictError):
-            handler = app.exception_handlers.get(ConflictError)
-            if handler is not None:
-                response = await handler(request, exc)
-            else:
-                response = JSONResponse(status_code=409, content=exc.to_dict(request_id))
-        else:
-            response = JSONResponse(
-                status_code=500,
-                content={
-                    "code": "internal_server_error",
-                    "message": "Internal server error.",
-                    "details": {},
-                    "request_id": request_id,
-                },
-            )
+                response = JSONResponse(
+                    status_code=500,
+                    content={
+                        "code": "internal_server_error",
+                        "message": "Internal server error.",
+                        "details": {},
+                        "request_id": request_id,
+                    },
+                )
         response.headers["X-Request-ID"] = request_id
+        for name, value in _BASE_SECURITY_HEADERS.items():
+            response.headers.setdefault(name, value)
+        if request.url.path == "/api/v1" or request.url.path.startswith("/api/v1/"):
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["Pragma"] = "no-cache"
         return response
-    response.headers["X-Request-ID"] = request_id
-    return response
+    finally:
+        status_code = response.status_code if response is not None else 500
+        elapsed_seconds = max(perf_counter() - started, 0.0)
+        log_http_request(
+            request_id=request_id,
+            method=request.method,
+            path=request.url.path,
+            status_code=status_code,
+            duration_ms=elapsed_seconds * 1000.0,
+        )
+        observe_http_request(
+            method=request.method,
+            route=route_template(request.scope),
+            status_code=status_code,
+            duration_seconds=elapsed_seconds,
+        )
 
 
 @app.exception_handler(NotFoundError)
@@ -86,7 +147,11 @@ async def conflict_exception_handler(request: Request, exc: ConflictError) -> JS
 @app.exception_handler(APIError)
 async def api_error_handler(request: Request, exc: APIError) -> JSONResponse:
     request_id = getattr(request.state, "request_id", uuid4().hex)
-    return JSONResponse(status_code=exc.http_status, content=exc.to_dict(request_id))
+    return JSONResponse(
+        status_code=exc.http_status,
+        content=exc.to_dict(request_id),
+        headers=_exception_response_headers(exc.headers),
+    )
 
 
 @app.exception_handler(PayloadTooLargeError)
@@ -109,7 +174,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         content={
             "code": "validation_error",
             "message": "Validation error.",
-            "details": {"errors": exc.errors()},
+            "details": {"errors": _safe_validation_errors(exc)},
             "request_id": request_id,
         },
     )
@@ -140,6 +205,7 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException) 
             "details": {},
             "request_id": request_id,
         },
+        headers=_exception_response_headers(dict(exc.headers or {})),
     )
 
 
@@ -147,8 +213,8 @@ app.include_router(api_router)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001"],
-    allow_credentials=True,
+    allow_origins=settings.cors_allowed_origins,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -163,18 +229,51 @@ async def root() -> dict[str, str]:
     }
 
 
+@app.get("/metrics", include_in_schema=False)
+async def metrics(request: Request) -> Response:
+    """Optional Prometheus endpoint protected by a dedicated static scrape token."""
+    if not settings.metrics_enabled:
+        raise StarletteHTTPException(status_code=404, detail="Not found.")
+
+    authorization = request.headers.get("Authorization", "")
+    scheme, separator, credential = authorization.partition(" ")
+    supplied_token = credential.strip() if separator and scheme.lower() == "bearer" else ""
+    if not supplied_token or not compare_digest(supplied_token, settings.metrics_bearer_token):
+        raise StarletteHTTPException(
+            status_code=401,
+            detail="Unauthorized.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    content, content_type = render_metrics()
+    return Response(content=content, status_code=200, headers={"Content-Type": content_type})
+
+
+_HEALTH_CHECK_TIMEOUT_SECONDS = 2.0
+
+
+async def _safe_dependency_check(check: Callable[[], Awaitable[bool]]) -> bool:
+    """Run a dependency check with a bounded timeout, never raising or hanging."""
+    try:
+        return await asyncio.wait_for(check(), timeout=_HEALTH_CHECK_TIMEOUT_SECONDS)
+    except Exception:
+        return False
+
+
+async def _check_dependencies() -> tuple[bool, bool]:
+    return await asyncio.gather(
+        _safe_dependency_check(check_database),
+        _safe_dependency_check(check_redis),
+    )
+
+
 @app.get("/health")
 async def health() -> dict[str, object]:
-    try:
-        db_ok = await check_database()
-    except Exception:
-        db_ok = False
+    """Legacy alias kept for backward compatibility; mirrors liveness-style 200 with a degraded status field.
 
-    try:
-        redis_ok = await check_redis()
-    except Exception:
-        redis_ok = False
-
+    Prefer `/health/live` for orchestration liveness probes and `/health/ready` for readiness probes.
+    """
+    db_ok, redis_ok = await _check_dependencies()
     overall_status = "ok" if (db_ok and redis_ok) else "degraded"
 
     return {
@@ -182,3 +281,22 @@ async def health() -> dict[str, object]:
         "database": db_ok,
         "redis": redis_ok,
     }
+
+
+@app.get("/health/live")
+async def health_live() -> dict[str, object]:
+    """Liveness probe: succeeds whenever the FastAPI process can handle a request, independent of dependencies."""
+    return {"status": "ok"}
+
+
+@app.get("/health/ready")
+async def health_ready() -> JSONResponse:
+    """Readiness probe: 200 only when PostgreSQL schema and Redis are ready, otherwise 503."""
+    db_ok, redis_ok = await _check_dependencies()
+    ready = db_ok and redis_ok
+    payload = {
+        "status": "ok" if ready else "degraded",
+        "database": db_ok,
+        "redis": redis_ok,
+    }
+    return JSONResponse(status_code=200 if ready else 503, content=payload)

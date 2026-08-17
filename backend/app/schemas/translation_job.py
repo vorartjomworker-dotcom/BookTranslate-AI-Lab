@@ -4,6 +4,9 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.core.log_safety import redact_sensitive_text
+from app.models.translation_job import MAX_TRANSLATION_JOB_ERROR_MESSAGE_LENGTH
+
 VALID_STATUS_VALUES = {"pending_enqueue", "queued", "running", "completed", "failed"}
 
 
@@ -46,3 +49,14 @@ class TranslationJobRead(TranslationJobBase):
     request_id: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("error_message", mode="before")
+    @classmethod
+    def sanitize_legacy_error_message(cls, value: object) -> str | None:
+        """Never reflect raw credentials from legacy/pre-hardening database rows."""
+        if value is None:
+            return None
+        sanitized = redact_sensitive_text(str(value).strip())
+        if not sanitized:
+            return None
+        return sanitized[:MAX_TRANSLATION_JOB_ERROR_MESSAGE_LENGTH]

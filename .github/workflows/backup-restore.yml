@@ -1,0 +1,126 @@
+name: Backup & Restore Validation
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'ops/**'
+      - 'docker-compose.yml'
+      - 'backend/Dockerfile'
+      - 'backend/.dockerignore'
+      - 'backend/requirements-runtime.txt'
+      - 'backend/alembic/**'
+      - '.github/workflows/backup-restore.yml'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'ops/**'
+      - 'docker-compose.yml'
+      - 'backend/Dockerfile'
+      - 'backend/.dockerignore'
+      - 'backend/requirements-runtime.txt'
+      - 'backend/alembic/**'
+      - '.github/workflows/backup-restore.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  round-trip:
+    runs-on: ubuntu-latest
+    env:
+      JWT_SECRET: test-only-secret-for-backup-restore-ci-at-least-32-characters-long
+      POSTGRES_PASSWORD: test-only-postgres-password-for-backup-restore-ci
+      REDIS_PASSWORD: test-only-redis-password-for-backup-restore-ci
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Validate recovery script syntax
+        run: |
+          set -euo pipefail
+          bash -n ops/postgres_backup.sh
+          bash -n ops/postgres_restore.sh
+          bash -n ops/uploads_backup.sh
+          bash -n ops/uploads_restore.sh
+
+      - name: PostgreSQL and uploads backup/restore round trip
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cleanup() {
+            docker compose down -v --remove-orphans || true
+          }
+          trap cleanup EXIT
+
+          docker compose down -v --remove-orphans || true
+          docker compose up -d --build backend
+
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://localhost:8000/health/ready >/dev/null; then
+              break
+            fi
+            if [ "$attempt" -eq 60 ]; then
+              echo "backend did not become ready for backup/restore validation"
+              docker compose ps -a
+              docker compose logs --no-color migrate backend postgres redis
+              exit 1
+            fi
+            sleep 2
+          done
+
+          expected_head="$(docker compose exec -T backend python -c 'from app.db import _expected_alembic_heads; heads=sorted(_expected_alembic_heads()); assert len(heads) == 1, heads; print(heads[0])' | tr -d '\r')"
+
+          docker compose exec -T postgres psql -U booktranslate -d booktranslate -v ON_ERROR_STOP=1 <<'SQL'
+          INSERT INTO books (title, file_path, file_type, language)
+          VALUES ('__backup_restore_ci__', '/tmp/backup-restore-ci.epub', 'epub', 'en');
+          SQL
+
+          bash ops/postgres_backup.sh /tmp/booktranslate-ci.dump
+          sha256sum -c /tmp/booktranslate-ci.dump.sha256
+
+          if RESTORE_DATABASE=booktranslate bash ops/postgres_restore.sh /tmp/booktranslate-ci.dump >/tmp/in-place-guard.out 2>&1; then
+            echo "in-place PostgreSQL restore unexpectedly succeeded without explicit confirmation"
+            exit 1
+          fi
+          grep -q "Refusing in-place restore" /tmp/in-place-guard.out
+
+          RESTORE_DATABASE=booktranslate_restore_ci bash ops/postgres_restore.sh /tmp/booktranslate-ci.dump
+
+          restored_probe="$(docker compose exec -T postgres psql -U booktranslate -d booktranslate_restore_ci -Atc "SELECT count(*) FROM books WHERE title='__backup_restore_ci__';" | tr -d '\r')"
+          test "$restored_probe" = "1"
+
+          restored_head="$(docker compose exec -T postgres psql -U booktranslate -d booktranslate_restore_ci -Atc 'SELECT version_num FROM alembic_version;' | tr -d '\r')"
+          test "$restored_head" = "$expected_head"
+
+          docker compose exec -T backend sh -ec 'printf "%s" "uploads-round-trip-ok" > "$UPLOAD_DIR/__backup_restore_ci__.txt"'
+          bash ops/uploads_backup.sh /tmp/booktranslate-uploads-ci.tar.gz
+          sha256sum -c /tmp/booktranslate-uploads-ci.tar.gz.sha256
+
+          if bash ops/uploads_restore.sh /tmp/booktranslate-uploads-ci.tar.gz >/tmp/uploads-guard.out 2>&1; then
+            echo "uploads restore unexpectedly succeeded without ALLOW_UPLOAD_RESTORE=YES"
+            exit 1
+          fi
+          grep -q "Refusing uploads restore" /tmp/uploads-guard.out
+
+          docker compose exec -T backend rm -f /var/lib/booktranslate/uploads/__backup_restore_ci__.txt
+          ALLOW_UPLOAD_RESTORE=YES bash ops/uploads_restore.sh /tmp/booktranslate-uploads-ci.tar.gz
+
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://localhost:8000/health/ready >/dev/null; then
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              echo "backend did not recover after uploads restore"
+              docker compose ps -a
+              docker compose logs --no-color backend translator-worker postgres redis
+              exit 1
+            fi
+            sleep 2
+          done
+
+          restored_upload="$(docker compose exec -T backend cat /var/lib/booktranslate/uploads/__backup_restore_ci__.txt | tr -d '\r')"
+          test "$restored_upload" = "uploads-round-trip-ok"
+
+          echo "✓ PostgreSQL and uploads backups are checksummed, guarded, and restore successfully in CI"

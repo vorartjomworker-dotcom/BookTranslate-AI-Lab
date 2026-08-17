@@ -173,6 +173,80 @@ async def test_dispatcher_uses_minimal_payload(async_session_factory):
 
 
 @pytest.mark.asyncio
+async def test_dispatcher_commits_selected_batch_once():
+    jobs = [
+        TranslationJob(
+            id=index,
+            segment_id=index,
+            provider="openai",
+            model="gpt-4o",
+            status="pending_enqueue",
+            attempt=0,
+            max_attempts=3,
+            queued_at=None,
+        )
+        for index in (1, 2)
+    ]
+
+    class FakeResult:
+        def scalars(self):
+            return self
+
+        def all(self):
+            return jobs
+
+    class FakeSession:
+        def __init__(self):
+            self.commit_count = 0
+            self.rollback_count = 0
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def execute(self, stmt):
+            return FakeResult()
+
+        async def commit(self):
+            self.commit_count += 1
+
+        async def rollback(self):
+            self.rollback_count += 1
+
+    class FakeFactory:
+        def __init__(self, session):
+            self.session = session
+
+        def __call__(self):
+            return self.session
+
+    class FakeRedis:
+        def __init__(self):
+            self.calls = 0
+
+        async def xgroup_create(self, *args, **kwargs):
+            return None
+
+        async def xadd(self, stream_name, fields):
+            self.calls += 1
+            return f"{self.calls}-0"
+
+    session = FakeSession()
+    redis = FakeRedis()
+    dispatcher = TranslationJobDispatcher(session_factory=FakeFactory(session), redis_client=redis, batch_size=10)
+
+    published = await dispatcher.dispatch_pending()
+
+    assert published == 2
+    assert redis.calls == 2
+    assert session.commit_count == 1
+    assert session.rollback_count == 0
+    assert [job.status for job in jobs] == ["queued", "queued"]
+
+
+@pytest.mark.asyncio
 async def test_reclaim_pending_handles_redis_xautoclaim_three_tuple():
     class FakeRedis:
         async def xautoclaim(self, stream_name, group_name, consumer_name, min_idle_time, start_id, count):

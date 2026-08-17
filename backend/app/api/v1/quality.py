@@ -4,8 +4,10 @@ from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundError
+from app.core.roles import EDITOR_ROLES
+from app.dependencies.auth import get_current_user, require_roles
 from app.dependencies.db import get_db
-from app.models import TranslationJob
+from app.models import TranslationJob, User
 from app.quality.ai_evaluator import AIQualityEvaluator, NullQualityAIEvaluator
 from app.quality.service import QualityAssuranceService
 from app.schemas.quality import BookQualitySummaryRead, QualityCheckRequest, TranslationQualityReportRead
@@ -21,7 +23,7 @@ def _build_service(db: AsyncSession, *, mode: str) -> QualityAssuranceService:
 
 
 @router.get("/quality-reports/{report_id}", response_model=TranslationQualityReportRead)
-async def get_quality_report(report_id: int, db: AsyncSession = Depends(get_db)) -> TranslationQualityReportRead:
+async def get_quality_report(report_id: int, db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)) -> TranslationQualityReportRead:
     service = QualityAssuranceService(db)
     report = await service.repository.get_by_id(report_id)
     if report is None:
@@ -30,7 +32,7 @@ async def get_quality_report(report_id: int, db: AsyncSession = Depends(get_db))
 
 
 @router.get("/segments/{segment_id}/quality-report", response_model=TranslationQualityReportRead)
-async def get_segment_quality_report(segment_id: int, db: AsyncSession = Depends(get_db)) -> TranslationQualityReportRead:
+async def get_segment_quality_report(segment_id: int, db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)) -> TranslationQualityReportRead:
     service = QualityAssuranceService(db)
     report = await service.get_latest_report_for_segment(segment_id)
     if report is None:
@@ -39,7 +41,7 @@ async def get_segment_quality_report(segment_id: int, db: AsyncSession = Depends
 
 
 @router.get("/books/{book_id}/quality-summary", response_model=BookQualitySummaryRead)
-async def get_book_quality_summary(book_id: int, db: AsyncSession = Depends(get_db)) -> BookQualitySummaryRead:
+async def get_book_quality_summary(book_id: int, db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)) -> BookQualitySummaryRead:
     service = QualityAssuranceService(db)
     summary = await service.get_book_summary(book_id)
     return BookQualitySummaryRead.model_validate(summary, from_attributes=True)
@@ -54,6 +56,7 @@ async def check_segment_quality(
     segment_id: int,
     payload: QualityCheckRequest,
     db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_roles(*EDITOR_ROLES)),
 ) -> TranslationQualityReportRead:
     service = _build_service(db, mode=payload.mode)
     report = await service.evaluate_segment(segment_id, mode=payload.mode)
@@ -70,9 +73,9 @@ async def check_segment_quality(
     deprecated=True,
     include_in_schema=True,
 )
-async def get_segment_quality_legacy(segment_id: int, db: AsyncSession = Depends(get_db)) -> TranslationQualityReportRead:
+async def get_segment_quality_legacy(segment_id: int, db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)) -> TranslationQualityReportRead:
     """Deprecated alias for GET /segments/{segment_id}/quality-report."""
-    return await get_segment_quality_report(segment_id, db)
+    return await get_segment_quality_report(segment_id, db, _)
 
 
 @router.post(
@@ -85,10 +88,11 @@ async def get_segment_quality_legacy(segment_id: int, db: AsyncSession = Depends
 async def create_quality_report_for_job_legacy(
     job_id: int,
     db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_roles(*EDITOR_ROLES)),
 ) -> TranslationQualityReportRead:
     """Deprecated alias: resolves the job's segment and delegates to the quality-check endpoint."""
     job = await db.get(TranslationJob, job_id)
     if job is None:
         raise NotFoundError("translation job", job_id)
-    return await check_segment_quality(job.segment_id, QualityCheckRequest(mode="deterministic"), db)
+    return await check_segment_quality(job.segment_id, QualityCheckRequest(mode="deterministic"), db, _)
 

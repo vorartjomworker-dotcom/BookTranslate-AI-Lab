@@ -93,11 +93,12 @@ def _make_zip_with_symlink_or_encrypted_entries(*, symlink: bool = False, encryp
 
 
 @pytest.fixture
-def client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> TestClient:
+def client(editor_client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> TestClient:
     uploads_dir = tmp_path / "uploads"
     monkeypatch.setattr(settings, "upload_dir", str(uploads_dir))
     app.dependency_overrides[get_db] = lambda: AsyncMock()
     with TestClient(app) as test_client:
+        test_client.headers.update(editor_client.headers)
         yield test_client
     app.dependency_overrides.clear()
 

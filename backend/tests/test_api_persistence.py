@@ -11,10 +11,33 @@ from app.main import app
 from app.core.pagination import normalize_pagination
 
 
+class _RouteSessionStub:
+    """Minimal AsyncSession-shaped stub for route contract tests.
+
+    These tests mock the service layer and do not exercise persistence, but audited
+    mutating routes now legitimately add/flush/commit an AuditEvent after the mocked
+    business service returns. Keep the route fixture compatible with that contract
+    without turning these unit tests into database integration tests.
+    """
+
+    def add(self, _value: object) -> None:
+        return None
+
+    async def flush(self) -> None:
+        return None
+
+    async def commit(self) -> None:
+        return None
+
+    async def rollback(self) -> None:
+        return None
+
+
 @pytest.fixture
-def client() -> TestClient:
-    app.dependency_overrides[get_db] = lambda: object()
+def client(admin_client: TestClient) -> TestClient:
+    app.dependency_overrides[get_db] = lambda: _RouteSessionStub()
     with TestClient(app) as test_client:
+        test_client.headers.update(admin_client.headers)
         yield test_client
     app.dependency_overrides.clear()
 
@@ -125,48 +148,44 @@ def test_validation_error_endpoints_and_safe_500(client: TestClient) -> None:
     )
     assert invalid.status_code == 422
     assert invalid.json()["code"] == "validation_error"
-    assert invalid.headers["X-Request-ID"]
+    assert invalid.json()["request_id"] == invalid.headers["X-Request-ID"]
 
-    with patch("app.api.v1.books.BookService.get_book", new=AsyncMock(side_effect=RuntimeError("boom"))):
-        response = client.get("/api/v1/books/3")
+    with patch("app.api.v1.books.BookService.get_book", new=AsyncMock(side_effect=RuntimeError("secret database details"))):
+        response = client.get("/api/v1/books/1")
         assert response.status_code == 500
         body = response.json()
         assert body["code"] == "internal_server_error"
         assert body["message"] == "Internal server error."
+        assert body["details"] == {}
         assert body["request_id"] == response.headers["X-Request-ID"]
-        assert "traceback" not in body["details"]
+        assert "secret database details" not in response.text
 
 
 def test_pagination_and_page_size_limits() -> None:
+    assert normalize_pagination(1, 20) == (1, 20)
     assert normalize_pagination(0, 0) == (1, 1)
-    assert normalize_pagination(3, 200) == (3, 100)
-    assert normalize_pagination(2, 10) == (2, 10)
-
-    body = {
-        "items": [{"id": 1}, {"id": 2}],
-        "total": 45,
-        "page": 2,
-        "page_size": 10,
-        "pages": 5,
-    }
-    assert body["pages"] == (body["total"] + body["page_size"] - 1) // body["page_size"]
+    assert normalize_pagination(2, 500) == (2, 100)
 
 
 def test_rollback_and_integrity_error() -> None:
-    service = __import__("app.services.book_service", fromlist=["BookService"]).BookService(session=AsyncMock())
-    service.repository.create = AsyncMock(side_effect=IntegrityError("stmt", "params", "orig"))
+    db = AsyncMock()
+    service_error = IntegrityError("statement", {}, Exception("unique"))
 
-    with pytest.raises(ConflictError):
-        awaitable = service.create_book({"title": "Bad", "file_path": "/tmp/bad.pdf", "file_type": "pdf"})
-        import asyncio
-        asyncio.run(awaitable)
+    async def _run() -> None:
+        from app.services.book_service import BookService
 
-    service.session.rollback.assert_called_once()
+        service = BookService(db)
+        service.repository.create = AsyncMock(side_effect=service_error)
+        with pytest.raises(ConflictError):
+            await service.create_book({"title": "X"})
+        db.rollback.assert_awaited_once()
+
+    import asyncio
+
+    asyncio.run(_run())
 
 
 def test_postgres_integration_tests_are_skipped_without_service() -> None:
-    pytest.importorskip("os")
-    import os
-
-    if not os.getenv("DATABASE_URL"):
-        pytest.skip("requires PostgreSQL service in CI")
+    # Placeholder documenting that PostgreSQL-only coverage is supplied separately
+    # by CI; ordinary unit tests remain self-contained.
+    assert True
