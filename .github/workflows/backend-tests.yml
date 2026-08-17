@@ -21,9 +21,6 @@ jobs:
       JWT_SECRET: test-only-secret-for-ci-at-least-32-characters-long
       JWT_ALGORITHM: HS256
       JWT_EXPIRE_MINUTES: 15
-      CI_DB_USER: booktranslate
-      CI_DB_PASSWORD: booktranslate
-      CI_DB_NAME: booktranslate_test
     strategy:
       matrix:
         python-version: ['3.12']
@@ -55,12 +52,22 @@ jobs:
     - name: Compile backend
       run: python -m compileall backend/app backend/tests
 
-    - name: Mask CI service credentials
-      shell: bash
+    - name: Configure masked CI service values
+      shell: python
       run: |
-        echo "::add-mask::${CI_DB_USER}"
-        echo "::add-mask::${CI_DB_PASSWORD}"
-        echo "::add-mask::${CI_DB_NAME}"
+        import os
+        from pathlib import Path
+
+        values = {
+            "CI_DB_USER": "booktranslate",
+            "CI_DB_PASSWORD": "booktranslate",
+            "CI_DB_NAME": "booktranslate_test",
+        }
+        env_file = Path(os.environ["GITHUB_ENV"])
+        with env_file.open("a", encoding="utf-8") as handle:
+            for key, value in values.items():
+                print(f"::add-mask::{value}")
+                handle.write(f"{key}={value}\n")
 
     - name: Start PostgreSQL CI service
       shell: bash
