@@ -30,6 +30,14 @@ from app.core.config import settings
 from app.quality.deterministic import QualityIssue, QualitySeverity
 
 
+_MAX_AI_ISSUES = 50
+_MAX_AI_RESPONSE_CHARS = 262_144
+_MAX_AI_ISSUE_CODE_CHARS = 100
+_MAX_AI_ISSUE_MESSAGE_CHARS = 1_000
+_MAX_AI_ISSUE_FIELD_CHARS = 100
+_MAX_AI_ISSUE_CONTEXT_CHARS = 2_000
+
+
 class QualityEvaluationError(RuntimeError):
     """Normalized, non-retryable failure of the optional AI evaluator."""
 
@@ -41,19 +49,19 @@ class QualityEvaluationError(RuntimeError):
 class _AIQualityIssuePayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    code: str
+    code: str = Field(..., min_length=1, max_length=_MAX_AI_ISSUE_CODE_CHARS)
     severity: QualitySeverity
-    message: str
-    field: str | None = None
-    expected: str | None = None
-    actual: str | None = None
+    message: str = Field(..., min_length=1, max_length=_MAX_AI_ISSUE_MESSAGE_CHARS)
+    field: str | None = Field(default=None, max_length=_MAX_AI_ISSUE_FIELD_CHARS)
+    expected: str | None = Field(default=None, max_length=_MAX_AI_ISSUE_CONTEXT_CHARS)
+    actual: str | None = Field(default=None, max_length=_MAX_AI_ISSUE_CONTEXT_CHARS)
     score_impact: int = Field(default=0, ge=0, le=100)
 
 
 class _AIQualityEvaluationResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    issues: list[_AIQualityIssuePayload] = Field(default_factory=list)
+    issues: list[_AIQualityIssuePayload] = Field(default_factory=list, max_length=_MAX_AI_ISSUES)
 
 
 _SYSTEM_PROMPT = (
@@ -226,7 +234,13 @@ class AIQualityEvaluator:
         content = getattr(message, "content", None) if message is not None else None
         if not isinstance(content, str) or not content.strip():
             raise QualityEvaluationError("AI quality evaluator returned empty content.", code="quality_ai_malformed_response")
-        return content.strip()
+        content = content.strip()
+        if len(content) > _MAX_AI_RESPONSE_CHARS:
+            raise QualityEvaluationError(
+                "AI quality evaluator returned an oversized response.",
+                code="quality_ai_malformed_response",
+            )
+        return content
 
 
 class NullQualityAIEvaluator:
