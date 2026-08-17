@@ -18,6 +18,7 @@ Implemented capabilities:
 - Next.js operational workspace and translation editor
 - local email/password authentication with `viewer`, `editor`, and `admin` roles
 - Redis-backed login throttling, durable PostgreSQL account lockout, and durable security audit trail
+- optional fail-closed Redis TLS enforcement requiring `rediss://` when enabled, plus credential-safe Redis endpoint logging
 - immediate server-side access-token revocation through per-user token versions
 - operator CLI password recovery with lockout clearing and token revocation
 - structured JSON HTTP request logging and optional protected Prometheus metrics
@@ -33,7 +34,7 @@ Implemented capabilities:
 - SQLAlchemy 2 async ORM
 - PostgreSQL 17
 - Alembic migrations
-- Redis 7 / Redis Streams with password authentication in local Compose
+- Redis 7 / Redis Streams with password authentication in local Compose and optional `rediss://` enforcement for production endpoints
 - Argon2id password hashing
 - HS256 short-lived JWT access tokens
 
@@ -79,6 +80,15 @@ alembic upgrade head
 ```
 
 The backend and translation worker start only after migrations complete successfully. The frontend waits for a healthy backend. The local Redis service requires `REDIS_PASSWORD`; backend and worker receive an authenticated Redis URL derived from that value.
+
+Local Compose deliberately uses `REDIS_TLS_REQUIRED=false` with authenticated `redis://` traffic on the private Docker network and a localhost-only host binding. For an external or managed production Redis endpoint, set both:
+
+```bash
+REDIS_TLS_REQUIRED=true
+REDIS_URL=rediss://:<password>@<redis-host>:6380/0
+```
+
+When `REDIS_TLS_REQUIRED=true`, application settings fail closed unless `REDIS_URL` uses `rediss://`. Only `redis://` and `rediss://` schemes with a host are accepted. This policy does not provide a TLS server by itself; the configured Redis service must actually support TLS and present a certificate trusted by the runtime.
 
 Local endpoints:
 
@@ -216,6 +226,8 @@ Administrators can read the append-only application audit feed through `/api/v1/
 
 HTTP requests are emitted as structured JSON events with bounded metadata: request ID, method, path without query string, response status, and duration. Request bodies, headers, access tokens, client IP addresses, and query-string secrets are not copied into these events.
 
+Redis worker connection logs use a credential-safe endpoint representation: username/password, database path, query string, and fragment are omitted rather than logging `REDIS_URL` verbatim.
+
 Prometheus metrics are optional and disabled by default. When enabled, `/metrics` requires a separate `METRICS_BEARER_TOKEN` of at least 32 characters. HTTP counters and latency histograms use route templates rather than arbitrary raw paths to keep label cardinality bounded.
 
 Production deployments should forward these structured logs and metrics to their selected aggregation/monitoring systems rather than relying only on container-local output.
@@ -296,7 +308,8 @@ GitHub Actions additionally runs PostgreSQL and Redis integration coverage and A
 The Docker Compose validation workflow verifies more than YAML syntax. It checks that:
 
 - `JWT_SECRET`, `POSTGRES_PASSWORD`, and `REDIS_PASSWORD` are required;
-- Redis starts with `--requirepass` and application services derive their Redis URL from the configured password;
+- Redis starts with `--requirepass` and application services derive their local Redis URL from the configured password;
+- backend and worker both receive `REDIS_TLS_REQUIRED`, while backend tests enforce that enabling it rejects plaintext `redis://` URLs and requires `rediss://`;
 - unauthenticated Redis `PING` does not succeed while authenticated `PING` returns `PONG`;
 - the migration service executes `alembic upgrade head`;
 - backend and worker wait for successful migrations;
@@ -317,7 +330,7 @@ The repository is an advanced MVP / pre-production platform, not a finished prod
 - GitHub branch protection/rulesets and required review/status gates;
 - independent PR review before promotion to production;
 - self-service or email-mediated password recovery only if the deployment requires it; operator CLI recovery is available;
-- TLS for Redis traffic or a managed private Redis service for production deployments;
+- provisioning an actual TLS-capable or managed private Redis endpoint in production and enabling `REDIS_TLS_REQUIRED=true`; application-side fail-closed enforcement is available but local Compose does not provide a Redis TLS server;
 - production secret management rather than local `.env` files;
 - production backup scheduling, off-host encrypted retention, monitoring, and PITR if required by RPO/RTO targets;
 - centralized log aggregation, distributed tracing, dashboards, and alerting;
