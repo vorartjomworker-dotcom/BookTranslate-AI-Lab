@@ -1,4 +1,5 @@
 import os
+from collections.abc import Mapping
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -18,7 +19,7 @@ _SECRET_FILE_FIELDS: dict[str, str] = {
 _MAX_SECRET_FILE_BYTES = 64 * 1024
 
 
-def _read_secret_file_values(environ: dict[str, str] | os._Environ[str] | None = None) -> dict[str, str]:
+def _read_secret_file_values(environ: Mapping[str, str] | None = None) -> dict[str, str]:
     """Resolve supported ``*_FILE`` environment variables without exposing secret values.
 
     Direct environment values and file-backed values are intentionally mutually exclusive.
@@ -286,7 +287,7 @@ class Settings(BaseSettings):
         return Path(self.upload_dir)
 
 
-def load_settings(environ: dict[str, str] | os._Environ[str] | None = None) -> Settings:
+def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
     return Settings(**_read_secret_file_values(environ))
 
 
