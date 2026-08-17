@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 
 import pytest
@@ -170,6 +171,75 @@ async def test_dispatcher_uses_minimal_payload(async_session_factory):
     assert set(captured) == {"job_id", "segment_id", "provider", "model", "attempt", "max_attempts"}
     assert captured["job_id"] == str(job.id)
     assert captured["segment_id"] == str(segment.id)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_dispatcher_cannot_publish_uncommitted_batch_row_twice(async_session_factory):
+    async with async_session_factory() as session:
+        segments = [
+            Segment(
+                chapter_id=1,
+                segment_number=40 + index,
+                original_text=f"concurrent-{index}",
+                translated_text=None,
+                status="pending",
+            )
+            for index in range(2)
+        ]
+        session.add_all(segments)
+        await session.commit()
+        for segment in segments:
+            await session.refresh(segment)
+
+        jobs = [
+            TranslationJob(
+                segment_id=segment.id,
+                provider="openai",
+                model="gpt-4o",
+                status="pending_enqueue",
+                attempt=0,
+                max_attempts=3,
+            )
+            for segment in segments
+        ]
+        session.add_all(jobs)
+        await session.commit()
+
+    class CoordinatedRedis:
+        def __init__(self):
+            self.call_count = 0
+            self.messages: list[str] = []
+            self.second_publish_entered = asyncio.Event()
+            self.release_second_publish = asyncio.Event()
+
+        async def xgroup_create(self, *args, **kwargs):
+            return None
+
+        async def xadd(self, stream_name, fields):
+            self.call_count += 1
+            call_number = self.call_count
+            self.messages.append(fields["job_id"])
+            if call_number == 2:
+                self.second_publish_entered.set()
+                await self.release_second_publish.wait()
+            return f"{call_number}-0"
+
+    redis = CoordinatedRedis()
+    first = TranslationJobDispatcher(session_factory=async_session_factory, redis_client=redis, batch_size=10)
+    second = TranslationJobDispatcher(session_factory=async_session_factory, redis_client=redis, batch_size=10)
+
+    first_task = asyncio.create_task(first.dispatch_pending())
+    await asyncio.wait_for(redis.second_publish_entered.wait(), timeout=5)
+
+    second_published = await asyncio.wait_for(second.dispatch_pending(), timeout=5)
+    assert second_published == 0
+
+    redis.release_second_publish.set()
+    first_published = await asyncio.wait_for(first_task, timeout=5)
+
+    assert first_published == 2
+    assert redis.call_count == 2
+    assert len(redis.messages) == 2
 
 
 @pytest.mark.asyncio
