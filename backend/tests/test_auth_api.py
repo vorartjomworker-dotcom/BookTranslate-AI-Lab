@@ -150,7 +150,8 @@ def test_me_rejects_token_with_wrong_algorithm(auth_client, async_session_factor
     import asyncio
 
     user = asyncio.run(_create_user(async_session_factory, email="algcheck@example.com", password="some-password-1", role="viewer"))
-    forged = jwt.encode({"sub": str(user.id), "token_type": "access"}, "guessed-secret", algorithm="HS256")
+    wrong_algorithm_key = "wrong-algorithm-test-secret-0123456789abcdef0123456789abcdef0123456789abcdef"
+    forged = jwt.encode({"sub": str(user.id), "token_type": "access"}, wrong_algorithm_key, algorithm="HS512")
     response = auth_client.get("/api/v1/auth/me", headers=_auth_header(forged))
     _assert_bearer_unauthorized(response)
 

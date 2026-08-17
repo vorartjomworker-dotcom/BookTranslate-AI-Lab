@@ -12,7 +12,7 @@ from app.document.types import ParsedChapter, ParsedDocument
 
 class EpubParser(DocumentParser):
     def _parse_sync(self, file_path: str | Path) -> ParsedDocument:
-        book = epub.read_epub(str(file_path))
+        book = epub.read_epub(str(file_path), options={"ignore_ncx": True})
 
         title = book.get_metadata("DC", "title")
         author = book.get_metadata("DC", "creator")

@@ -153,10 +153,10 @@ jobs:
       env:
         DATABASE_URL: postgresql+asyncpg://booktranslate:booktranslate@localhost:5432/booktranslate_test
 
-    - name: Run pytest
+    - name: Run pytest with warnings as errors
       working-directory: backend
       run: |
-        pytest tests/ -v --tb=short
+        pytest tests/ -v --tb=short -W error
       env:
         DATABASE_URL: postgresql+asyncpg://booktranslate:booktranslate@localhost:5432/booktranslate_test
         REDIS_URL: redis://localhost:6379/0
