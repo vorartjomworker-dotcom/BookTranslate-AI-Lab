@@ -15,6 +15,7 @@ from app.ai.exceptions import TranslationError
 from app.ai.translation_service import TranslationService
 from app.ai.types import TranslationRequest
 from app.core.config import settings
+from app.core.redis_security import safe_redis_endpoint
 from app.core.time import utc_now_naive
 from app.db import async_session_factory
 from app.models import Segment, TranslationJob
@@ -80,7 +81,7 @@ class TranslatorWorker:
 
     async def connect(self) -> None:
         if self.redis is None:
-            logger.info("Connecting to Redis at %s", settings.redis_url)
+            logger.info("Connecting to Redis at %s", safe_redis_endpoint(settings.redis_url))
             self.redis = Redis.from_url(
                 settings.redis_url,
                 decode_responses=True,
