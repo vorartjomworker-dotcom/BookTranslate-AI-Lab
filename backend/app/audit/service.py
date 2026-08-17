@@ -2,13 +2,21 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+from collections.abc import Mapping
 from typing import Any
 
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.log_safety import redact_sensitive_text
 from app.models import AuditEvent
+
+
+_MAX_AUDIT_DETAIL_DEPTH = 4
+_MAX_AUDIT_DETAIL_ITEMS = 50
+_MAX_AUDIT_DETAIL_STRING_LENGTH = 1000
+_MAX_AUDIT_DETAIL_KEY_LENGTH = 100
 
 
 def audit_hash(namespace: str, value: str | None) -> str | None:
@@ -17,6 +25,47 @@ def audit_hash(namespace: str, value: str | None) -> str | None:
         return None
     message = f"{namespace}:{value}".encode("utf-8")
     return hmac.new(settings.jwt_secret.encode("utf-8"), message, hashlib.sha256).hexdigest()
+
+
+def _sanitize_audit_detail(value: Any, *, depth: int = 0) -> Any:
+    """Return a bounded JSON-safe audit value with credential-like text redacted.
+
+    Audit details are durable security records. They must remain useful for operators
+    without becoming a long-lived sink for request text, provider credentials, or
+    secret-bearing exception fragments.
+    """
+    if depth >= _MAX_AUDIT_DETAIL_DEPTH:
+        return "<redacted-complex-value>"
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return redact_sensitive_text(value)[:_MAX_AUDIT_DETAIL_STRING_LENGTH]
+    if isinstance(value, Mapping):
+        sanitized: dict[str, Any] = {}
+        for index, (key, item) in enumerate(value.items()):
+            if index >= _MAX_AUDIT_DETAIL_ITEMS:
+                sanitized["<truncated>"] = True
+                break
+            safe_key = redact_sensitive_text(str(key))[:_MAX_AUDIT_DETAIL_KEY_LENGTH]
+            sanitized[safe_key] = _sanitize_audit_detail(item, depth=depth + 1)
+        return sanitized
+    if isinstance(value, (list, tuple)):
+        sanitized_items = [
+            _sanitize_audit_detail(item, depth=depth + 1)
+            for item in value[:_MAX_AUDIT_DETAIL_ITEMS]
+        ]
+        if len(value) > _MAX_AUDIT_DETAIL_ITEMS:
+            sanitized_items.append("<truncated>")
+        return sanitized_items
+    return f"<{value.__class__.__name__}>"
+
+
+def sanitize_audit_details(details: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """Sanitize and bound durable audit details before they reach the database."""
+    if details is None:
+        return None
+    sanitized = _sanitize_audit_detail(details)
+    return sanitized if isinstance(sanitized, dict) else {"value": sanitized}
 
 
 class AuditService:
@@ -46,7 +95,7 @@ class AuditService:
             subject_hash=subject_hash,
             source_hash=source_hash,
             request_id=request_id,
-            details=details,
+            details=sanitize_audit_details(details),
         )
         self.session.add(event)
         if flush:
