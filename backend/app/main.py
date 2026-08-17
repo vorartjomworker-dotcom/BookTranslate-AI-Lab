@@ -33,6 +33,19 @@ def _exception_response_headers(headers: dict[str, str] | None) -> dict[str, str
     }
 
 
+def _safe_validation_errors(exc: RequestValidationError) -> list[dict[str, Any]]:
+    """Expose useful validation metadata without reflecting request values or validator context."""
+    errors: list[dict[str, Any]] = []
+    for error in exc.errors():
+        safe_error: dict[str, Any] = {
+            "type": error.get("type", "validation_error"),
+            "loc": list(error.get("loc", ())),
+            "msg": error.get("msg", "Invalid value."),
+        }
+        errors.append(safe_error)
+    return errors
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     try:
@@ -149,7 +162,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         content={
             "code": "validation_error",
             "message": "Validation error.",
-            "details": {"errors": exc.errors()},
+            "details": {"errors": _safe_validation_errors(exc)},
             "request_id": request_id,
         },
     )
