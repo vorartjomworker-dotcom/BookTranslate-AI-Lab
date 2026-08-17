@@ -17,6 +17,7 @@ from app.benchmarks.pricing import estimate_cost_usd, get_pricing_snapshot
 from app.benchmarks.repository import BenchmarkRepository
 from app.core.config import settings
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError
+from app.core.log_safety import redact_sensitive_text
 from app.core.time import utc_now_naive
 from app.models import BenchmarkCaseResult, BenchmarkRun
 
@@ -247,7 +248,8 @@ class BenchmarkService:
         run.status = "cancelled"
         run.cancelled_at = _utcnow()
         run.error_code = "benchmark_cancelled"
-        run.error_message = reason or "Benchmark run cancelled by request."
+        raw_reason = (reason or "").strip()
+        run.error_message = redact_sensitive_text(raw_reason)[:500] if raw_reason else "Benchmark run cancelled by request."
         await self.session.commit()
         return run
 
