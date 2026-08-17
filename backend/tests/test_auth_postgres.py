@@ -32,7 +32,7 @@ async def _cleanup(session) -> None:
 
 
 @pytest.mark.asyncio
-async def test_users_table_exists_and_enforces_unique_email_role_and_lockout_constraints() -> None:
+async def test_users_table_exists_and_enforces_unique_email_role_lockout_and_token_constraints() -> None:
     engine, session_factory = build_test_session_factory()
     try:
         async with session_factory() as session:
@@ -50,13 +50,14 @@ async def test_users_table_exists_and_enforces_unique_email_role_and_lockout_con
             row = (
                 await session.execute(
                     text(
-                        "SELECT failed_login_attempts, locked_until FROM users "
+                        "SELECT failed_login_attempts, locked_until, token_version FROM users "
                         "WHERE normalized_email = 'pg-user@example.com'"
                     )
                 )
             ).one()
             assert row.failed_login_attempts == 0
             assert row.locked_until is None
+            assert row.token_version == 0
 
             with pytest.raises(Exception):
                 await session.execute(
@@ -84,6 +85,16 @@ async def test_users_table_exists_and_enforces_unique_email_role_and_lockout_con
                 await session.execute(
                     text(
                         "UPDATE users SET failed_login_attempts = -1 "
+                        "WHERE normalized_email = 'pg-user@example.com'"
+                    )
+                )
+                await session.commit()
+            await session.rollback()
+
+            with pytest.raises(Exception):
+                await session.execute(
+                    text(
+                        "UPDATE users SET token_version = -1 "
                         "WHERE normalized_email = 'pg-user@example.com'"
                     )
                 )
@@ -132,6 +143,51 @@ async def test_concurrent_failed_logins_do_not_lose_lockout_increments() -> None
                 )
             ).scalar_one()
             assert attempts == 2
+            await _cleanup(session)
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_revocations_do_not_lose_token_version_increments() -> None:
+    engine, session_factory = build_test_session_factory()
+    email = "pg-revoke-race@example.com"
+    try:
+        async with session_factory() as session:
+            await _cleanup(session)
+            user_id = (
+                await session.execute(
+                    text(
+                        "INSERT INTO users (email, normalized_email, password_hash, role, is_active) "
+                        "VALUES (:email, :normalized_email, :password_hash, 'viewer', true) RETURNING id"
+                    ),
+                    {
+                        "email": email,
+                        "normalized_email": email,
+                        "password_hash": hash_password("correct-password-1"),
+                    },
+                )
+            ).scalar_one()
+            await session.commit()
+
+        async def revoke_once() -> int:
+            async with session_factory() as session:
+                service = AuthService(session)
+                version = await service.revoke_all_access_tokens(int(user_id))
+                await session.commit()
+                return version
+
+        versions = await asyncio.gather(revoke_once(), revoke_once())
+        assert sorted(versions) == [1, 2]
+
+        async with session_factory() as session:
+            final_version = (
+                await session.execute(
+                    text("SELECT token_version FROM users WHERE id = :user_id"),
+                    {"user_id": user_id},
+                )
+            ).scalar_one()
+            assert final_version == 2
             await _cleanup(session)
     finally:
         await engine.dispose()
