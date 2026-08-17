@@ -7,6 +7,7 @@ import inspect
 import logging
 import signal
 import sys
+from datetime import timedelta
 from typing import Any
 
 from redis.asyncio import Redis
@@ -101,6 +102,44 @@ class TranslatorWorker:
             await self.redis.aclose()
             logger.info("Redis connection closed")
 
+    async def _claim_job_for_processing(self, job_id: int) -> str:
+        """Atomically claim one durable job before any provider call.
+
+        Redis Streams is intentionally at-least-once. A database row lock plus the
+        durable job status makes duplicate stream deliveries harmless: terminal jobs
+        are never reopened, a currently-running job is not processed twice, and a
+        genuinely stale running job can be recovered after the configured timeout.
+        """
+        async with async_session_factory() as session:
+            job = await session.get(TranslationJob, job_id, with_for_update=True)
+            if job is None:
+                return "missing"
+            if job.status == "completed":
+                return "completed"
+            if job.status == "failed":
+                return "failed"
+
+            now = utc_now_naive()
+            if job.status == "running":
+                stale_after = timedelta(
+                    seconds=max(
+                        int(settings.translation_job_timeout_seconds),
+                        int(settings.translation_job_max_stale_ms) / 1000,
+                    )
+                )
+                if job.started_at is not None and now - job.started_at < stale_after:
+                    return "busy"
+            elif job.status not in {"queued", "pending_enqueue"}:
+                return "busy"
+
+            job.status = "running"
+            job.started_at = now
+            if job.queued_at is None:
+                job.queued_at = now
+            job.error_message = None
+            await session.commit()
+            return "claimed"
+
     async def _mark_job_state(self, *, job_id: int | None, status: str, error: str | None = None) -> None:
         if job_id is None:
             return
@@ -108,6 +147,12 @@ class TranslatorWorker:
             async with async_session_factory() as session:
                 job = await session.get(TranslationJob, job_id)
                 if job is None:
+                    return
+
+                # Never let a late best-effort state update reopen a terminal job.
+                if job.status == "completed" and status != "completed":
+                    return
+                if job.status == "failed" and status in {"queued", "running"}:
                     return
 
                 if status == "queued":
@@ -155,8 +200,44 @@ class TranslatorWorker:
 
         try:
             if job_id is not None:
-                await self._mark_job_state(job_id=job_id, status="queued")
-                await self._mark_job_state(job_id=job_id, status="running")
+                claim_status = await self._claim_job_for_processing(job_id)
+                if claim_status == "completed":
+                    async with async_session_factory() as session:
+                        segment = await session.get(Segment, segment_id)
+                    return {
+                        "job_id": job_id,
+                        "segment_id": segment_id,
+                        "status": "completed",
+                        "provider": provider,
+                        "duplicate": True,
+                        "qa_score": getattr(segment, "qa_score", None),
+                        "qa_status": getattr(segment, "qa_status", None),
+                    }
+                if claim_status == "failed":
+                    return {
+                        "job_id": job_id,
+                        "segment_id": segment_id,
+                        "status": "failed",
+                        "provider": provider,
+                        "duplicate": True,
+                    }
+                if claim_status == "busy":
+                    return {
+                        "job_id": job_id,
+                        "segment_id": segment_id,
+                        "status": "running",
+                        "provider": provider,
+                        "duplicate": True,
+                    }
+                if claim_status == "missing":
+                    return {
+                        "job_id": job_id,
+                        "segment_id": segment_id,
+                        "status": "failed",
+                        "provider": provider,
+                        "duplicate": True,
+                        "error_code": "translation_job_not_found",
+                    }
 
             async with async_session_factory() as session:
                 segment = await session.get(Segment, segment_id)
@@ -165,7 +246,8 @@ class TranslatorWorker:
 
                 job = await session.get(TranslationJob, job_id) if job_id is not None else None
 
-                # Duplicate delivery of an already-completed job: no re-translation, no second QA report.
+                # Defense in depth for a terminal transition that may have happened
+                # after the claim transaction but before this processing transaction.
                 if job is not None and job.status == "completed":
                     return {
                         "job_id": job_id,
@@ -175,6 +257,14 @@ class TranslatorWorker:
                         "duplicate": True,
                         "qa_score": segment.qa_score,
                         "qa_status": segment.qa_status,
+                    }
+                if job is not None and job.status == "failed":
+                    return {
+                        "job_id": job_id,
+                        "segment_id": segment_id,
+                        "status": "failed",
+                        "provider": provider,
+                        "duplicate": True,
                     }
 
                 partial_result: dict[str, Any] = {
