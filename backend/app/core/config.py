@@ -1,4 +1,5 @@
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from pydantic import ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -11,6 +12,7 @@ class Settings(BaseSettings):
     metrics_bearer_token: str = ""
     database_url: str = "postgresql+asyncpg://booktranslate:booktranslate@postgres:5432/booktranslate"
     redis_url: str = "redis://redis:6379/0"
+    redis_tls_required: bool = False
 
     upload_dir: str = "uploads"
     max_upload_size_mb: int = 25
@@ -101,6 +103,25 @@ class Settings(BaseSettings):
     def validate_metrics_security(self) -> "Settings":
         if self.metrics_enabled and len(self.metrics_bearer_token) < 32:
             raise ValueError("metrics_bearer_token must contain at least 32 characters when metrics are enabled")
+        return self
+
+    @field_validator("redis_url")
+    @classmethod
+    def validate_redis_url(cls, value: str) -> str:
+        redis_url = value.strip()
+        try:
+            parsed = urlsplit(redis_url)
+        except ValueError as exc:
+            raise ValueError("redis_url must be a valid redis:// or rediss:// URL") from exc
+
+        if parsed.scheme.lower() not in {"redis", "rediss"} or not parsed.hostname:
+            raise ValueError("redis_url must use redis:// or rediss:// and include a host")
+        return redis_url
+
+    @model_validator(mode="after")
+    def validate_redis_transport_security(self) -> "Settings":
+        if self.redis_tls_required and urlsplit(self.redis_url).scheme.lower() != "rediss":
+            raise ValueError("redis_url must use rediss:// when redis_tls_required is enabled")
         return self
 
     @field_validator("default_ai_provider")
