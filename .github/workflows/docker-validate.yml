@@ -11,6 +11,7 @@ on:
       - 'backend/alembic.ini'
       - 'backend/alembic/**'
       - 'backend/app/core/config.py'
+      - 'backend/app/core/redis_security.py'
       - 'backend/app/main.py'
       - 'backend/app/metrics.py'
       - 'backend/app/observability.py'
@@ -30,6 +31,7 @@ on:
       - 'backend/alembic.ini'
       - 'backend/alembic/**'
       - 'backend/app/core/config.py'
+      - 'backend/app/core/redis_security.py'
       - 'backend/app/main.py'
       - 'backend/app/metrics.py'
       - 'backend/app/observability.py'
@@ -105,7 +107,7 @@ jobs:
         print("✓ backend healthcheck targets /health/ready")
         PY
 
-    - name: Verify migrations, Redis auth, and metrics configuration
+    - name: Verify migrations, Redis auth/TLS policy, and metrics configuration
       shell: bash
       run: |
         set -euo pipefail
@@ -127,8 +129,10 @@ jobs:
             assert condition == "service_completed_successfully", (
                 f"{service_name} must wait for successful migrations, got: {condition!r}"
             )
-            redis_url = services[service_name].get("environment", {}).get("REDIS_URL", "")
+            environment = services[service_name].get("environment", {})
+            redis_url = environment.get("REDIS_URL", "")
             assert "REDIS_PASSWORD" in redis_url, f"{service_name} REDIS_URL must be derived from REDIS_PASSWORD"
+            assert "REDIS_TLS_REQUIRED" in environment, f"{service_name} must receive REDIS_TLS_REQUIRED"
 
         backend_environment = services["backend"].get("environment", {})
         assert "METRICS_ENABLED" in backend_environment, "backend must receive METRICS_ENABLED"
@@ -142,7 +146,7 @@ jobs:
         frontend_build_args = services["frontend"].get("build", {}).get("args", {})
         assert "NEXT_PUBLIC_API_URL" in frontend_build_args, "frontend must receive NEXT_PUBLIC_API_URL at build time"
 
-        print("✓ migrations gate backend/worker; Redis authentication and protected metrics configuration are wired")
+        print("✓ migrations gate backend/worker; Redis authentication/TLS policy and protected metrics configuration are wired")
         PY
 
     - name: Verify Docker build contexts exclude local secrets and caches
