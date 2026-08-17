@@ -7,7 +7,11 @@ export async function login(email: string, password: string): Promise<AccessToke
   return response;
 }
 
+export async function logout(): Promise<void> {
+  // Keep this bounded so a broken network cannot trap the user in the authenticated UI.
+  await api.post<void>('/api/v1/auth/logout', undefined, { timeoutMs: 2000 });
+}
+
 export function clearAuthToken(): void {
   setAccessToken(null);
 }
-
