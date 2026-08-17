@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.roles import ROLE_ADMIN
@@ -21,6 +21,17 @@ class UserRepository:
             statement = statement.with_for_update()
         result = await self.session.execute(statement)
         return result.scalar_one_or_none()
+
+    async def bump_token_version(self, user_id: int) -> int | None:
+        """Atomically invalidate every previously issued access token for one user."""
+        result = await self.session.execute(
+            update(User)
+            .where(User.id == user_id)
+            .values(token_version=User.token_version + 1)
+            .returning(User.token_version)
+        )
+        version = result.scalar_one_or_none()
+        return int(version) if version is not None else None
 
     async def list(self) -> list[User]:
         result = await self.session.execute(select(User).order_by(User.id))
