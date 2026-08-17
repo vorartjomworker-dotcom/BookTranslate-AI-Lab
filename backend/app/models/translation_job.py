@@ -3,9 +3,13 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import DateTime, ForeignKey, Index, String, Text, text
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
+from app.core.log_safety import redact_sensitive_text
 from app.models.base import Base
+
+
+MAX_TRANSLATION_JOB_ERROR_MESSAGE_LENGTH = 2000
 
 
 class TranslationJob(Base):
@@ -61,3 +65,13 @@ class TranslationJob(Base):
         back_populates="translation_job",
         foreign_keys="TranslationQualityReport.translation_job_id",
     )
+
+    @validates("error_message")
+    def sanitize_error_message(self, _key: str, value: str | None) -> str | None:
+        """Prevent worker/provider/driver credentials from becoming durable API-visible data."""
+        if value is None:
+            return None
+        sanitized = redact_sensitive_text(str(value).strip())
+        if not sanitized:
+            return None
+        return sanitized[:MAX_TRANSLATION_JOB_ERROR_MESSAGE_LENGTH]
