@@ -28,3 +28,16 @@ def test_baseline_security_headers_are_present_on_success_and_error() -> None:
     assert not_found.status_code == 404
     _assert_security_headers(success)
     _assert_security_headers(not_found)
+
+
+def test_versioned_api_responses_are_never_cacheable() -> None:
+    with TestClient(app) as client:
+        unauthenticated = client.get("/api/v1/books")
+        api_not_found = client.get("/api/v1/definitely-not-a-real-route")
+
+    assert unauthenticated.status_code == 401
+    assert api_not_found.status_code == 404
+    for response in (unauthenticated, api_not_found):
+        assert response.headers["Cache-Control"] == "no-store"
+        assert response.headers["Pragma"] == "no-cache"
+        _assert_security_headers(response)
