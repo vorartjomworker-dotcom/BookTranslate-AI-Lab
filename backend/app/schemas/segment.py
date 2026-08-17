@@ -13,8 +13,8 @@ MAX_SEGMENT_SOURCE_CHARS = settings.segment_hard_limit_chars
 
 class SegmentBase(BaseModel):
     segment_number: int = Field(..., ge=1)
-    original_text: str = Field(..., min_length=1, max_length=MAX_SEGMENT_SOURCE_CHARS)
-    translated_text: str | None = Field(default=None, max_length=MAX_TRANSLATED_TEXT_CHARS)
+    original_text: str = Field(..., min_length=1)
+    translated_text: str | None = None
     confidence: float = Field(default=0.0, ge=0.0)
     model_used: str | None = Field(default=None, max_length=100)
     status: str = Field(default="pending", min_length=1, max_length=50)
@@ -29,7 +29,8 @@ class SegmentBase(BaseModel):
 
 
 class SegmentCreate(SegmentBase):
-    pass
+    original_text: str = Field(..., min_length=1, max_length=MAX_SEGMENT_SOURCE_CHARS)
+    translated_text: str | None = Field(default=None, max_length=MAX_TRANSLATED_TEXT_CHARS)
 
 
 class SegmentUpdate(BaseModel):
