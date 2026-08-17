@@ -84,6 +84,35 @@ def test_process_log_factory_redacts_exc_info_but_keeps_traceback(caplog) -> Non
     assert "postgresql+asyncpg://<redacted>@postgres.example:5432/booktranslate" in caplog.text
 
 
+def test_process_log_factory_redacts_values_by_sensitive_mapping_key(caplog) -> None:
+    logger = logging.getLogger("booktranslate.test.structured-secret-fields")
+    payload = {
+        "password": "structured-password-value",
+        "accessToken": "structured-access-token-value",
+        "provider_api_key": "structured-provider-key-value",
+        "client_secret": "structured-client-secret-value",
+        "headers": {"Authorization": "opaque-authorization-value"},
+        "token_version": 9,
+        "tokens_used": 128,
+    }
+
+    with caplog.at_level(logging.INFO, logger=logger.name):
+        logger.info("provider payload=%s", payload)
+
+    for secret in (
+        "structured-password-value",
+        "structured-access-token-value",
+        "structured-provider-key-value",
+        "structured-client-secret-value",
+        "opaque-authorization-value",
+    ):
+        assert secret not in caplog.text
+    assert "'password': '<redacted>'" in caplog.text
+    assert "'accessToken': '<redacted>'" in caplog.text
+    assert "'token_version': 9" in caplog.text
+    assert "'tokens_used': 128" in caplog.text
+
+
 def test_process_log_factory_preserves_non_sensitive_operational_fields(caplog) -> None:
     logger = logging.getLogger("booktranslate.test.safe-fields")
 
