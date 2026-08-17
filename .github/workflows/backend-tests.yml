@@ -21,6 +21,9 @@ jobs:
       JWT_SECRET: test-only-secret-for-ci-at-least-32-characters-long
       JWT_ALGORITHM: HS256
       JWT_EXPIRE_MINUTES: 15
+      CI_DB_USER: booktranslate
+      CI_DB_PASSWORD: booktranslate
+      CI_DB_NAME: booktranslate_test
     strategy:
       matrix:
         python-version: ['3.12']
@@ -52,6 +55,13 @@ jobs:
     - name: Compile backend
       run: python -m compileall backend/app backend/tests
 
+    - name: Mask CI service credentials
+      shell: bash
+      run: |
+        echo "::add-mask::${CI_DB_USER}"
+        echo "::add-mask::${CI_DB_PASSWORD}"
+        echo "::add-mask::${CI_DB_NAME}"
+
     - name: Start PostgreSQL CI service
       shell: bash
       run: |
@@ -59,28 +69,35 @@ jobs:
         docker run --detach \
           --name booktranslate-ci-postgres \
           --publish 5432:5432 \
-          --env POSTGRES_DB=booktranslate_test \
-          --env POSTGRES_USER=booktranslate \
-          --env POSTGRES_PASSWORD=booktranslate \
+          --env "POSTGRES_DB=${CI_DB_NAME}" \
+          --env "POSTGRES_USER=${CI_DB_USER}" \
+          --env "POSTGRES_PASSWORD=${CI_DB_PASSWORD}" \
           --env POSTGRES_HOST_AUTH_METHOD=scram-sha-256 \
           postgres:17 >/dev/null
 
     - name: Wait for PostgreSQL
       run: |
-        python -c "
+        python - <<'PY'
+        import os
         import time
         import psycopg2
+
         for _ in range(30):
-          try:
-            conn = psycopg2.connect(host='localhost', user='booktranslate', password='booktranslate', dbname='booktranslate_test')
-            conn.close()
-            print('PostgreSQL is ready!')
-            break
-          except:
-            time.sleep(1)
+            try:
+                conn = psycopg2.connect(
+                    host="localhost",
+                    user=os.environ["CI_DB_USER"],
+                    password=os.environ["CI_DB_PASSWORD"],
+                    dbname=os.environ["CI_DB_NAME"],
+                )
+                conn.close()
+                print("PostgreSQL is ready!")
+                break
+            except Exception:
+                time.sleep(1)
         else:
-          raise TimeoutError('PostgreSQL did not become ready')
-        "
+            raise TimeoutError("PostgreSQL did not become ready")
+        PY
 
     - name: Harden PostgreSQL CI authentication and logging
       shell: bash
@@ -97,21 +114,27 @@ jobs:
         docker kill --signal=HUP booktranslate-ci-postgres >/dev/null
         sleep 1
 
-        if docker exec booktranslate-ci-postgres sh -ec 'unset PGPASSWORD; psql -U booktranslate -d booktranslate_test -c "SELECT 1" >/dev/null 2>&1'; then
+        if docker exec --env "CI_DB_USER=${CI_DB_USER}" --env "CI_DB_NAME=${CI_DB_NAME}" booktranslate-ci-postgres \
+          sh -ec 'unset PGPASSWORD; psql -U "$CI_DB_USER" -d "$CI_DB_NAME" -c "SELECT 1" >/dev/null 2>&1'; then
           echo "::error::PostgreSQL local authentication unexpectedly succeeded without a password"
           exit 1
         fi
-        docker exec --env PGPASSWORD=booktranslate booktranslate-ci-postgres \
-          psql -U booktranslate -d booktranslate_test -c 'SELECT 1' >/dev/null
+        docker exec \
+          --env "CI_DB_USER=${CI_DB_USER}" \
+          --env "CI_DB_NAME=${CI_DB_NAME}" \
+          --env "PGPASSWORD=${CI_DB_PASSWORD}" \
+          booktranslate-ci-postgres \
+          sh -ec 'psql -U "$CI_DB_USER" -d "$CI_DB_NAME" -c "SELECT 1" >/dev/null'
 
         python - <<'PY'
+        import os
         import psycopg2
 
         connect_kwargs = {
             "host": "localhost",
-            "user": "booktranslate",
-            "password": "booktranslate",
-            "dbname": "booktranslate_test",
+            "user": os.environ["CI_DB_USER"],
+            "password": os.environ["CI_DB_PASSWORD"],
+            "dbname": os.environ["CI_DB_NAME"],
         }
 
         conn = psycopg2.connect(**connect_kwargs)
@@ -183,14 +206,14 @@ jobs:
       working-directory: backend
       run: alembic upgrade head
       env:
-        DATABASE_URL: postgresql+asyncpg://booktranslate:booktranslate@localhost:5432/booktranslate_test
+        DATABASE_URL: postgresql+asyncpg://${{ env.CI_DB_USER }}:${{ env.CI_DB_PASSWORD }}@localhost:5432/${{ env.CI_DB_NAME }}
 
     - name: Run pytest with warnings as errors
       working-directory: backend
       run: |
         pytest tests/ -v --tb=short -W error
       env:
-        DATABASE_URL: postgresql+asyncpg://booktranslate:booktranslate@localhost:5432/booktranslate_test
+        DATABASE_URL: postgresql+asyncpg://${{ env.CI_DB_USER }}:${{ env.CI_DB_PASSWORD }}@localhost:5432/${{ env.CI_DB_NAME }}
         REDIS_URL: redis://localhost:6379/0
         TRANSLATION_STREAM_NAME: translation_jobs
         TRANSLATION_CONSUMER_GROUP: translation-workers
