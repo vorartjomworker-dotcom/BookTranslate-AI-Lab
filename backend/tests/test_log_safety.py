@@ -26,6 +26,16 @@ def test_redact_sensitive_text_removes_url_userinfo_and_named_credentials() -> N
     assert "postgresql+asyncpg://<redacted>@postgres.example:5432/booktranslate" in safe
 
 
+def test_redact_sensitive_text_handles_multiple_at_characters_in_userinfo() -> None:
+    raw = "redis://worker:pa@ss@cache.example:6379/0"
+
+    safe = redact_sensitive_text(raw)
+
+    assert safe == "redis://<redacted>@cache.example:6379/0"
+    assert "worker" not in safe
+    assert "pa@ss" not in safe
+
+
 def test_redact_sensitive_text_removes_bearer_credentials() -> None:
     raw = "Authorization failed with Bearer eyJhbGciOiJIUzI1NiJ9.sensitive.signature"
 
