@@ -3,8 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
-from app.core.config import _MAX_SECRET_FILE_BYTES, _read_secret_file_values, load_settings
+from app.core.config import (
+    Settings,
+    _MAX_SECRET_FILE_BYTES,
+    _read_secret_file_values,
+    load_settings,
+)
 
 
 _TEST_JWT_SECRET = "mounted-jwt-secret-at-least-32-characters-long"
@@ -107,3 +113,38 @@ def test_secret_file_must_be_regular_file(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY_FILE must reference a regular file"):
         _read_secret_file_values({"ANTHROPIC_API_KEY_FILE": str(directory)})
+
+
+def test_invalid_mounted_jwt_secret_is_not_echoed_by_validation_error(tmp_path: Path) -> None:
+    secret_value = "short-mounted-jwt-secret"
+    jwt_file = _write_secret(tmp_path / "jwt-invalid", secret_value + "\n")
+    values = _read_secret_file_values({"JWT_SECRET_FILE": str(jwt_file)})
+
+    with pytest.raises(ValidationError, match="jwt_secret must contain at least 32 characters") as exc_info:
+        Settings(**values)
+
+    message = str(exc_info.value)
+    assert secret_value not in message
+    assert "input_value" not in message
+
+
+def test_invalid_mounted_redis_url_does_not_echo_credentials_in_validation_error(tmp_path: Path) -> None:
+    redis_password = "redis-password-must-never-appear"
+    redis_value = f"http://:{redis_password}@cache.example:6379/0?token=also-secret"
+    jwt_file = _write_secret(tmp_path / "jwt", _TEST_JWT_SECRET + "\n")
+    redis_file = _write_secret(tmp_path / "redis-invalid", redis_value + "\n")
+    values = _read_secret_file_values(
+        {
+            "JWT_SECRET_FILE": str(jwt_file),
+            "REDIS_URL_FILE": str(redis_file),
+        }
+    )
+
+    with pytest.raises(ValidationError, match="redis_url must use redis:// or rediss://") as exc_info:
+        Settings(**values)
+
+    message = str(exc_info.value)
+    assert redis_value not in message
+    assert redis_password not in message
+    assert "also-secret" not in message
+    assert "input_value" not in message
