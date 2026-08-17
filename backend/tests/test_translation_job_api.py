@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import IntegrityError
 
 import app.api.v1.translation_jobs as jobs_api
 from app.main import app
@@ -15,10 +16,20 @@ class _FakeDBResult:
     def scalar_one_or_none(self):
         return None
 
+    def scalars(self):
+        return self
+
+    def first(self):
+        return None
+
+    def all(self):
+        return []
+
 
 class _FakeSession:
     def __init__(self):
         self.added = []
+        self.rollback_count = 0
 
     async def get(self, model, key):
         if model is Segment:
@@ -56,9 +67,17 @@ class _FakeSession:
                 obj.completed_at = None
                 obj.failed_at = None
 
+    async def rollback(self):
+        self.rollback_count += 1
+
     async def refresh(self, obj):
         if isinstance(obj, TranslationJob):
             obj.id = 1
+
+
+class _RaceConflictSession(_FakeSession):
+    async def commit(self):
+        raise IntegrityError("INSERT INTO translation_jobs ...", {}, RuntimeError("concurrent active-job conflict"))
 
 
 @pytest.fixture
@@ -114,6 +133,23 @@ def test_create_job_succeeds_when_redis_is_unavailable(client: TestClient, fake_
 
     assert response.status_code == 202
     assert response.json()["status"] == "pending_enqueue"
+
+
+def test_create_job_database_race_returns_conflict_and_rolls_back(client: TestClient):
+    session = _RaceConflictSession()
+
+    async def _race_db():
+        yield session
+
+    app.dependency_overrides[get_db] = _race_db
+    try:
+        response = client.post("/api/v1/segments/1/translation-jobs", json={"provider": "openai"})
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "conflict"
+    assert session.rollback_count == 1
 
 
 def test_manual_translation_patch_updates_only_translated_text(client: TestClient, fake_db_override):
