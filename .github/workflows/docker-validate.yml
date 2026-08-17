@@ -227,7 +227,7 @@ jobs:
 
         unauthenticated_redis="$(docker compose exec -T redis redis-cli ping 2>/dev/null || true)"
         test "$unauthenticated_redis" != "PONG"
-        authenticated_redis="$(docker compose exec -T redis sh -c 'redis-cli --no-auth-warning -a \"$REDIS_PASSWORD\" ping' | tr -d '\r')"
+        authenticated_redis="$(docker compose exec -T redis sh -c 'REDISCLI_AUTH=$REDIS_PASSWORD redis-cli ping' | tr -d '\r')"
         test "$authenticated_redis" = "PONG"
 
         mounted_secret='test-only-mounted-jwt-secret-at-least-32-characters-long'
