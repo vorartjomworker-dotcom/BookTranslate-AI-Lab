@@ -68,6 +68,12 @@ Copy all three generated values into `.env`. Do not commit `.env`, reuse these v
 
 AI provider keys are optional unless the corresponding live provider is used.
 
+#### Frontend API origin policy
+
+`NEXT_PUBLIC_API_URL` is compiled into the frontend production bundle. Local development may use an HTTP loopback origin such as `http://localhost:8000`, `http://127.0.0.1:8000`, or `http://[::1]:8000`. A remote deployment must use an exact HTTPS origin such as `https://api.example.com` or `https://api.example.com:8443`.
+
+The value must be a pure origin: user information, paths, query strings, fragments, non-HTTP(S) schemes, invalid ports, and remote plaintext HTTP are rejected. The same validator runs from `next.config.ts` during frontend configuration/build and from the frontend API client as defense in depth. Unsafe values fail closed with a generic validation message that does not echo the configured URL or embedded credentials.
+
 ### 2. Start the stack
 
 ```bash
@@ -338,7 +344,7 @@ The Docker Compose validation workflow verifies more than YAML syntax. It checks
 - unauthenticated Redis `PING` does not succeed while authenticated `PING` returns `PONG`;
 - the migration service executes `alembic upgrade head`;
 - backend and worker wait for successful migrations;
-- the frontend receives `NEXT_PUBLIC_API_URL` at build time;
+- the frontend receives `NEXT_PUBLIC_API_URL` at build time and rejects unsafe remote/plaintext/credential-bearing/non-origin values before a production build can succeed;
 - Docker build contexts exclude local `.env`, dependency directories, and build caches;
 - a clean Docker deployment can build and start the production frontend/backend stack;
 - `/health/ready` succeeds at the current Alembic head;
