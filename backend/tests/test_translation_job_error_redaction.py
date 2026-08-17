@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.models.translation_job import MAX_TRANSLATION_JOB_ERROR_MESSAGE_LENGTH, TranslationJob
+from app.schemas.translation_job import TranslationJobRead
 
 
 def _failed_job(error_message: str | None) -> TranslationJob:
@@ -59,3 +60,26 @@ def test_translation_job_error_message_is_bounded_and_blank_becomes_none() -> No
 
     job.error_message = None
     assert job.error_message is None
+
+
+def test_translation_job_read_sanitizes_legacy_raw_error_message() -> None:
+    legacy_password = "legacy-db-secret"
+    legacy_bearer = "legacy-bearer-secret"
+    job = _failed_job(None)
+    job.id = 42
+
+    # Simulate a row written before the ORM validator existed. Direct __dict__ assignment
+    # intentionally bypasses the model validator so this test exercises the API read guard.
+    job.__dict__["error_message"] = (
+        f"postgresql://book:{legacy_password}@db.example/booktranslate "
+        f"Authorization: Bearer {legacy_bearer} "
+        + ("x" * (MAX_TRANSLATION_JOB_ERROR_MESSAGE_LENGTH + 500))
+    )
+
+    response = TranslationJobRead.model_validate(job)
+
+    assert response.error_message is not None
+    assert "<redacted>" in response.error_message
+    assert legacy_password not in response.error_message
+    assert legacy_bearer not in response.error_message
+    assert len(response.error_message) <= MAX_TRANSLATION_JOB_ERROR_MESSAGE_LENGTH
