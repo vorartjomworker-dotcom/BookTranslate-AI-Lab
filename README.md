@@ -19,6 +19,7 @@ Implemented capabilities:
 - local email/password authentication with `viewer`, `editor`, and `admin` roles
 - Redis-backed login throttling, durable PostgreSQL account lockout, and durable security audit trail
 - immediate server-side access-token revocation through per-user token versions
+- operator CLI password recovery with lockout clearing and token revocation
 - structured JSON HTTP request logging and optional protected Prometheus metrics
 - liveness/readiness endpoints and Docker Compose deployment validation
 - checksummed PostgreSQL/uploads backup helpers with CI-tested restore round trips
@@ -115,11 +116,23 @@ After readiness succeeds:
 docker compose exec -it backend python -m app.auth.bootstrap_admin
 ```
 
-Enter the administrator email and password interactively. This CLI is the only first-administrator/recovery path; there is no public bootstrap HTTP endpoint.
+Enter the administrator email and password interactively. This CLI is the only first-administrator bootstrap path; there is no public bootstrap HTTP endpoint.
 
 Concurrent bootstrap attempts are serialized in PostgreSQL, and the ordinary admin API prevents demoting or deactivating the last active administrator.
 
-### 5. Log in
+### 5. Recover an existing account password from the operator CLI
+
+For a known existing account whose password must be replaced:
+
+```bash
+docker compose exec -it backend python -m app.auth.reset_password
+```
+
+Enter the target email and new password interactively. The reset preserves the account role and active/inactive state, clears durable login lockout state, increments the user's token version so all previously issued access JWTs are immediately invalidated, and writes a durable `auth.password_reset` audit event. The password and raw email are not copied into audit details.
+
+For non-interactive automation, `RESET_USER_EMAIL` and `RESET_USER_PASSWORD` may be supplied to the CLI process through a secure secret-injection mechanism. Do not commit either value or place them in persistent shell history or repository `.env` files.
+
+### 6. Log in
 
 ```bash
 curl -X POST "http://localhost:8000/api/v1/auth/login" \
@@ -179,7 +192,7 @@ This request-level limiter complements the durable account lockout below.
 
 Alembic migration `008` adds `failed_login_attempts` and `locked_until` to users. By default, 10 consecutive invalid passwords lock an account for 15 minutes. Existing-user authentication takes a row lock before changing the counters so concurrent failures cannot lose increments. A successful authentication clears prior failures, and expired locks recover automatically.
 
-The public authentication contract remains intentionally generic for unknown and locked accounts so lock state cannot be used as an account-enumeration signal. The threshold and duration are configurable with `LOGIN_LOCKOUT_THRESHOLD` and `LOGIN_LOCKOUT_MINUTES`.
+The public authentication contract remains intentionally generic for unknown and locked accounts so lock state cannot be used as an account-enumeration signal. The threshold and duration are configurable with `LOGIN_LOCKOUT_THRESHOLD` and `LOGIN_LOCKOUT_MINUTES`. Operator CLI password recovery also clears the target user's durable lockout counters as part of the same transaction as the password replacement.
 
 ### Immediate access-token revocation
 
@@ -187,11 +200,13 @@ Alembic migration `009` adds a non-negative per-user `token_version`. Newly issu
 
 `POST /api/v1/auth/logout` atomically increments `token_version`, immediately invalidating every previously issued access token for the authenticated user. Concurrent revocations use an atomic SQL increment so updates are not lost. Tokens issued before migration `009` without `ver` are treated as version `0` only for migration compatibility and are invalidated by the first revocation.
 
+The operator CLI password-recovery command also increments `token_version` while holding the target user row lock, so a credential reset cannot leave previously issued access tokens valid.
+
 The browser still clears its in-memory identity/workspace state even when the logout request cannot reach the server. Server revocation is therefore best-effort from the browser but authoritative whenever the request succeeds.
 
 ### Durable security audit trail
 
-Alembic migration `007` adds the durable `audit_events` table. Security-sensitive events include login success/failure/rate-limit/dependency failures, logout revocation, administrator user creation/update and last-admin denials, destructive book/chapter/segment deletion, and benchmark create/resume/cancel operations.
+Alembic migration `007` adds the durable `audit_events` table. Security-sensitive events include login success/failure/rate-limit/dependency failures, logout revocation, operator CLI password recovery, administrator user creation/update and last-admin denials, destructive book/chapter/segment deletion, and benchmark create/resume/cancel operations.
 
 Audit entries carry actor/action/outcome/target/request ID and safe structured details. Raw passwords, JWTs, email addresses, client IP addresses, and benchmark cancellation text are not copied into audit details; identity/source identifiers use HMAC-derived hashes where required.
 
@@ -301,7 +316,7 @@ The repository is an advanced MVP / pre-production platform, not a finished prod
 
 - GitHub branch protection/rulesets and required review/status gates;
 - independent PR review before promotion to production;
-- password reset/recovery workflow beyond administrator CLI recovery;
+- self-service or email-mediated password recovery only if the deployment requires it; operator CLI recovery is available;
 - TLS for Redis traffic or a managed private Redis service for production deployments;
 - production secret management rather than local `.env` files;
 - production backup scheduling, off-host encrypted retention, monitoring, and PITR if required by RPO/RTO targets;
