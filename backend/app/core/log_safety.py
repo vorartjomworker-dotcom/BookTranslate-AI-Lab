@@ -15,6 +15,7 @@ _NAMED_SECRET_RE = re.compile(
     r"(?P=quote)",
     re.IGNORECASE,
 )
+_CAMEL_CASE_BOUNDARY_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 _MAX_SANITIZE_DEPTH = 4
 _INSTALLED = False
 
@@ -36,6 +37,53 @@ def redact_sensitive_text(value: str) -> str:
     return text
 
 
+def is_sensitive_field_name(value: object) -> bool:
+    """Return whether a structured field name conventionally carries secret material.
+
+    Structured logging/audit payloads frequently separate the key from its value, e.g.
+    ``{"access_token": "..."}``. Text regexes cannot infer that the standalone value is
+    sensitive, so mapping sanitizers must use the field name as context. Operational fields
+    such as ``token_version`` and ``tokens_used`` intentionally remain visible.
+    """
+    if not isinstance(value, str):
+        return False
+    separated = _CAMEL_CASE_BOUNDARY_RE.sub("_", value.strip())
+    normalized = re.sub(r"[\s.\-]+", "_", separated).lower().strip("_")
+    if not normalized:
+        return False
+
+    if normalized in {
+        "password",
+        "passwd",
+        "pwd",
+        "token",
+        "api_key",
+        "secret",
+        "authorization",
+        "authorization_header",
+        "bearer",
+        "bearer_token",
+        "cookie",
+        "set_cookie",
+    }:
+        return True
+
+    if normalized.startswith("authorization_"):
+        return True
+
+    return normalized.endswith(
+        (
+            "_password",
+            "_passwd",
+            "_pwd",
+            "_token",
+            "_api_key",
+            "_secret",
+            "_cookie",
+        )
+    )
+
+
 def _sanitize_log_arg(value: Any, *, depth: int = 0) -> Any:
     if depth >= _MAX_SANITIZE_DEPTH:
         return "<redacted-complex-value>"
@@ -44,10 +92,15 @@ def _sanitize_log_arg(value: Any, *, depth: int = 0) -> Any:
     if isinstance(value, str):
         return redact_sensitive_text(value)
     if isinstance(value, Mapping):
-        return {
-            _sanitize_log_arg(key, depth=depth + 1): _sanitize_log_arg(item, depth=depth + 1)
-            for key, item in value.items()
-        }
+        sanitized: dict[Any, Any] = {}
+        for key, item in value.items():
+            safe_key = _sanitize_log_arg(key, depth=depth + 1)
+            sanitized[safe_key] = (
+                "<redacted>"
+                if is_sensitive_field_name(key)
+                else _sanitize_log_arg(item, depth=depth + 1)
+            )
+        return sanitized
     if isinstance(value, tuple):
         return tuple(_sanitize_log_arg(item, depth=depth + 1) for item in value)
     if isinstance(value, list):
