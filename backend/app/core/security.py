@@ -50,13 +50,16 @@ def normalize_email(email: str) -> str:
     return email.strip().lower()
 
 
-def create_access_token(user_id: int) -> str:
+def create_access_token(user_id: int, token_version: int = 0) -> str:
+    if isinstance(token_version, bool) or not isinstance(token_version, int) or token_version < 0:
+        raise ValueError("token_version must be a non-negative integer")
     now = datetime.now(timezone.utc)
     payload: dict[str, Any] = {
         "sub": str(user_id),
         "iat": int(now.timestamp()),
         "exp": int((now + timedelta(minutes=settings.jwt_expire_minutes)).timestamp()),
         "token_type": "access",
+        "ver": token_version,
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
@@ -73,4 +76,12 @@ def decode_access_token(token: str) -> dict[str, Any]:
 
     if payload.get("token_type") != "access" or "sub" not in payload:
         raise TokenError("Token is missing a subject.")
+
+    # Tokens issued before migration 009 had no version claim. Treat them as version 0
+    # so existing sessions survive the migration, while the first server-side revoke
+    # increments the user's version and invalidates every legacy token immediately.
+    version = payload.get("ver", 0)
+    if isinstance(version, bool) or not isinstance(version, int) or version < 0:
+        raise TokenError("Token has an invalid version.")
+    payload["ver"] = version
     return payload
