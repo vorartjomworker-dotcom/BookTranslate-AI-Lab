@@ -2,6 +2,8 @@
 
 This directory contains guarded backup and restore helpers for the local/pre-production Docker Compose deployment.
 
+For production credential rotation using the validated mounted-secret interface, see [`SECRET_ROTATION.md`](./SECRET_ROTATION.md). That runbook documents restart requirements, verification, rollback, and JWT/PostgreSQL/Redis/metrics/AI-provider-specific cutover behavior without choosing a particular cloud secret store.
+
 ## Scope
 
 The durable data that must be protected is:
