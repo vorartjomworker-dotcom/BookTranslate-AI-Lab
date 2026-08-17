@@ -1,5 +1,9 @@
 import type { NextConfig } from "next";
 
+import { validatePublicApiBaseUrl } from "./config/public-api-url";
+
+export const publicApiBaseUrl = validatePublicApiBaseUrl(process.env.NEXT_PUBLIC_API_URL);
+
 export const browserSecurityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "Referrer-Policy", value: "no-referrer" },
