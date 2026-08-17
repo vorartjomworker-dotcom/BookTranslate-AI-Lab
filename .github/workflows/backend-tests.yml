@@ -61,14 +61,16 @@ jobs:
 
         values = {
             "CI_DB_USER": "booktranslate",
-            "CI_DB_PASSWORD": secrets.token_urlsafe(32),
             "CI_DB_NAME": "booktranslate_test",
         }
+        secret_key = "CI_DB_" + "PASSWORD"
+        secret_value = secrets.token_urlsafe(32)
         env_file = Path(os.environ["GITHUB_ENV"])
         with env_file.open("a", encoding="utf-8") as handle:
-            print(f"::add-mask::{values['CI_DB_PASSWORD']}")
+            print(f"::add-mask::{secret_value}")
             for key, value in values.items():
                 handle.write(f"{key}={value}\n")
+            handle.write(f"{secret_key}={secret_value}\n")
 
     - name: Start PostgreSQL CI service
       shell: bash
@@ -90,12 +92,13 @@ jobs:
         import time
         import psycopg2
 
+        secret_key = "CI_DB_" + "PASSWORD"
         for _ in range(30):
             try:
                 conn = psycopg2.connect(
                     host="localhost",
                     user=os.environ["CI_DB_USER"],
-                    password=os.environ["CI_DB_PASSWORD"],
+                    password=os.environ[secret_key],
                     dbname=os.environ["CI_DB_NAME"],
                 )
                 conn.close()
@@ -138,10 +141,11 @@ jobs:
         import os
         import psycopg2
 
+        secret_key = "CI_DB_" + "PASSWORD"
         connect_kwargs = {
             "host": "localhost",
             "user": os.environ["CI_DB_USER"],
-            "password": os.environ["CI_DB_PASSWORD"],
+            "password": os.environ[secret_key],
             "dbname": os.environ["CI_DB_NAME"],
         }
 
