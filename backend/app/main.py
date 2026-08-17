@@ -23,6 +23,13 @@ from app.redis_client import check_redis
 
 
 _SERIALIZER_MANAGED_HEADERS = {"content-length", "content-type"}
+_BASE_SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "X-Frame-Options": "DENY",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+    "Content-Security-Policy": "object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
+}
 
 
 def _exception_response_headers(headers: dict[str, str] | None) -> dict[str, str]:
@@ -101,6 +108,8 @@ async def add_request_id(request: Request, call_next):
                     },
                 )
         response.headers["X-Request-ID"] = request_id
+        for name, value in _BASE_SECURITY_HEADERS.items():
+            response.headers.setdefault(name, value)
         return response
     finally:
         status_code = response.status_code if response is not None else 500
