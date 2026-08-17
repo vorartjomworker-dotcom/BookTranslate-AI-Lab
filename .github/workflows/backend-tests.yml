@@ -25,22 +25,6 @@ jobs:
       matrix:
         python-version: ['3.12']
 
-    services:
-      postgres:
-        image: postgres:17
-        env:
-          POSTGRES_DB: booktranslate_test
-          POSTGRES_USER: booktranslate
-          POSTGRES_PASSWORD: booktranslate
-          POSTGRES_INITDB_ARGS: --auth-local=scram-sha-256
-        options: >-
-          --health-cmd "pg_isready -U booktranslate -d booktranslate_test"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
-
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -65,6 +49,19 @@ jobs:
     - name: Compile backend
       run: python -m compileall backend/app backend/tests
 
+    - name: Start PostgreSQL CI service
+      shell: bash
+      run: |
+        set -euo pipefail
+        docker run --detach \
+          --name booktranslate-ci-postgres \
+          --publish 5432:5432 \
+          --env POSTGRES_DB=booktranslate_test \
+          --env POSTGRES_USER=booktranslate \
+          --env POSTGRES_PASSWORD=booktranslate \
+          --env POSTGRES_HOST_AUTH_METHOD=scram-sha-256 \
+          postgres:17 >/dev/null
+
     - name: Wait for PostgreSQL
       run: |
         python -c "
@@ -82,8 +79,28 @@ jobs:
           raise TimeoutError('PostgreSQL did not become ready')
         "
 
-    - name: Harden PostgreSQL CI logging
+    - name: Harden PostgreSQL CI authentication and logging
+      shell: bash
       run: |
+        set -euo pipefail
+
+        docker exec booktranslate-ci-postgres sh -ec '
+          sed -E -i "/^[[:space:]]*#/! s/[[:space:]]trust([[:space:]]*(#.*)?)$/ scram-sha-256\1/" "$PGDATA/pg_hba.conf"
+          if grep -E -q "^[[:space:]]*(local|host)[[:space:]].*[[:space:]]trust([[:space:]]|$)" "$PGDATA/pg_hba.conf"; then
+            echo "unsafe trust rule remains in pg_hba.conf" >&2
+            exit 1
+          fi
+        '
+        docker kill --signal=HUP booktranslate-ci-postgres >/dev/null
+        sleep 1
+
+        if docker exec booktranslate-ci-postgres sh -ec 'unset PGPASSWORD; psql -U booktranslate -d booktranslate_test -c "SELECT 1" >/dev/null 2>&1'; then
+          echo "::error::PostgreSQL local authentication unexpectedly succeeded without a password"
+          exit 1
+        fi
+        docker exec --env PGPASSWORD=booktranslate booktranslate-ci-postgres \
+          psql -U booktranslate -d booktranslate_test -c 'SELECT 1' >/dev/null
+
         python - <<'PY'
         import psycopg2
 
@@ -118,7 +135,7 @@ jobs:
         finally:
             verify.close()
 
-        print("PostgreSQL CI logging hardened")
+        print("PostgreSQL CI authentication and logging hardened")
         PY
 
     - name: Start clean Redis CI service
@@ -140,7 +157,7 @@ jobs:
           --publish 6379:6379 \
           --volume /tmp/booktranslate-redis-ci.conf:/usr/local/etc/redis/redis.conf:ro \
           redis:7-alpine \
-          redis-server /usr/local/etc/redis/redis.conf
+          redis-server /usr/local/etc/redis/redis.conf >/dev/null
 
     - name: Wait for Redis
       run: |
@@ -178,27 +195,33 @@ jobs:
         TRANSLATION_CONSUMER_NAME: translator-worker-1
         RUN_INTEGRATION_TESTS: "1"
 
-    - name: Verify PostgreSQL service logs stay metadata-only and warning-clean
+    - name: Verify PostgreSQL CI logs stay metadata-only and operationally clean
       if: always()
+      shell: bash
       run: |
-        logs="$(docker logs "${{ job.services.postgres.id }}" 2>&1)"
+        set -euo pipefail
+        if ! docker inspect booktranslate-ci-postgres >/dev/null 2>&1; then
+          echo "::error::PostgreSQL CI container was not created"
+          exit 1
+        fi
+        logs="$(docker logs booktranslate-ci-postgres 2>&1)"
         if printf '%s' "$logs" | grep -E -q 'DETAIL:|STATEMENT:|Failing row contains|\$argon2(id|i|d)\$|race-db-exact@example\.com|pg-user@example\.com'; then
-          echo "::error::PostgreSQL CI service logs contain row, statement, or credential material"
+          echo "::error::PostgreSQL CI logs contain row, statement, or credential material"
           exit 1
         fi
         if printf '%s' "$logs" | grep -Fq 'role "root" does not exist'; then
-          echo "::error::PostgreSQL CI healthcheck used the wrong database role"
+          echo "::error::PostgreSQL CI used the wrong database role"
           exit 1
         fi
         if printf '%s' "$logs" | grep -Fq 'no usable system locales were found'; then
           echo "::error::PostgreSQL CI image emitted the Alpine locale warning"
           exit 1
         fi
-        if printf '%s' "$logs" | grep -Fq 'enabling "trust" authentication for local connections'; then
-          echo "::error::PostgreSQL CI initdb fell back to trust authentication"
+        if docker exec booktranslate-ci-postgres sh -ec 'grep -E -q "^[[:space:]]*(local|host)[[:space:]].*[[:space:]]trust([[:space:]]|$)" "$PGDATA/pg_hba.conf"'; then
+          echo "::error::PostgreSQL CI pg_hba.conf contains an active trust rule"
           exit 1
         fi
-        echo "PostgreSQL CI service logs are metadata-only and free of healthcheck/locale/auth warning noise"
+        echo "PostgreSQL CI logs are metadata-only; healthcheck/locale noise is absent and active auth rules are password-protected"
 
     - name: Verify Redis CI startup logs are clean
       if: always()
@@ -212,7 +235,6 @@ jobs:
         logs="$(docker logs booktranslate-ci-redis 2>&1)"
         if printf '%s' "$logs" | grep -Ei -q 'overcommit_memory|no config file specified|WARNING'; then
           echo "::error::Redis CI startup logs contain warning noise"
-          printf '%s\n' "$logs"
           exit 1
         fi
         echo "Redis CI startup logs are warning-free"
@@ -226,6 +248,9 @@ jobs:
         python -c "from app.core.config import settings; print('✓ config.py OK')"
         python -c "from alembic.config import Config; print('✓ alembic.config OK')"
 
-    - name: Stop Redis CI service
+    - name: Stop CI services
       if: always()
-      run: docker rm --force booktranslate-ci-redis >/dev/null 2>&1 || true
+      shell: bash
+      run: |
+        docker rm --force booktranslate-ci-redis >/dev/null 2>&1 || true
+        docker rm --force booktranslate-ci-postgres >/dev/null 2>&1 || true
