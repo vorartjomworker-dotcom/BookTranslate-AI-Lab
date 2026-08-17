@@ -1,8 +1,63 @@
+import os
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from pydantic import ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+_SECRET_FILE_FIELDS: dict[str, str] = {
+    "JWT_SECRET": "jwt_secret",
+    "DATABASE_URL": "database_url",
+    "REDIS_URL": "redis_url",
+    "METRICS_BEARER_TOKEN": "metrics_bearer_token",
+    "OPENAI_API_KEY": "openai_api_key",
+    "ANTHROPIC_API_KEY": "anthropic_api_key",
+    "DEEPL_API_KEY": "deepl_api_key",
+}
+_MAX_SECRET_FILE_BYTES = 64 * 1024
+
+
+def _read_secret_file_values(environ: dict[str, str] | os._Environ[str] | None = None) -> dict[str, str]:
+    """Resolve supported ``*_FILE`` environment variables without exposing secret values.
+
+    Direct environment values and file-backed values are intentionally mutually exclusive.
+    This avoids ambiguous precedence during production secret rotation and makes accidental
+    fallback to a stale plaintext environment value fail closed.
+    """
+    source = os.environ if environ is None else environ
+    values: dict[str, str] = {}
+
+    for env_name, field_name in _SECRET_FILE_FIELDS.items():
+        file_env_name = f"{env_name}_FILE"
+        file_path_value = source.get(file_env_name, "").strip()
+        if not file_path_value:
+            continue
+
+        if source.get(env_name, "").strip():
+            raise RuntimeError(f"{env_name} and {file_env_name} cannot both be set")
+
+        path = Path(file_path_value)
+        try:
+            stat = path.stat()
+        except OSError as exc:
+            raise RuntimeError(f"{file_env_name} could not be read") from exc
+
+        if not path.is_file():
+            raise RuntimeError(f"{file_env_name} must reference a regular file")
+        if stat.st_size > _MAX_SECRET_FILE_BYTES:
+            raise RuntimeError(f"{file_env_name} exceeds the maximum supported secret size")
+
+        try:
+            value = path.read_text(encoding="utf-8").rstrip("\r\n")
+        except (OSError, UnicodeError) as exc:
+            raise RuntimeError(f"{file_env_name} could not be read") from exc
+
+        if not value:
+            raise RuntimeError(f"{file_env_name} references an empty secret")
+        values[field_name] = value
+
+    return values
 
 
 class Settings(BaseSettings):
@@ -231,4 +286,8 @@ class Settings(BaseSettings):
         return Path(self.upload_dir)
 
 
-settings = Settings()
+def load_settings(environ: dict[str, str] | os._Environ[str] | None = None) -> Settings:
+    return Settings(**_read_secret_file_values(environ))
+
+
+settings = load_settings()
