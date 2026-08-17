@@ -1,3 +1,4 @@
+import { validatePublicApiBaseUrl } from '../../config/public-api-url';
 import type { ApiErrorEnvelope } from './api-types';
 
 export type RequestOptions = RequestInit & { timeoutMs?: number; responseType?: 'json' | 'blob' };
@@ -31,7 +32,7 @@ export class ApiTimeoutError extends Error {
   }
 }
 
-const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/$/, '');
+const API_URL = validatePublicApiBaseUrl(process.env.NEXT_PUBLIC_API_URL);
 const DEFAULT_TIMEOUT_MS = 15000;
 
 // In-memory only: the access token is never written to localStorage/sessionStorage so it
