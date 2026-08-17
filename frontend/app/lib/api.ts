@@ -101,7 +101,9 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     if (token && !headers.has('Authorization')) headers.set('Authorization', `Bearer ${token}`);
     const response = await fetch(`${API_URL}${path}`, { ...options, headers, credentials: 'omit', signal: controller.signal });
     if (!response.ok) {
-      if (response.status === 401 && token && unauthorizedHandler) unauthorizedHandler();
+      // Only invalidate the session that actually issued this request. A delayed 401
+      // from a stale request must not tear down a newer reauthenticated/login session.
+      if (response.status === 401 && token && token === accessToken && unauthorizedHandler) unauthorizedHandler();
       const unauthorizedContext: UnauthorizedContext = token ? 'authenticated-request' : 'unauthenticated-request';
       throw new ApiError(response.status, await parseEnvelope(response), unauthorizedContext);
     }
