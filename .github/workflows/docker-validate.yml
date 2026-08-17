@@ -178,11 +178,37 @@ jobs:
         }
         assert_security_headers() {
           local headers_file="$1"
-          grep -Eiq '^x-content-type-options:[[:space:]]*nosniff\r?$' "$headers_file"
-          grep -Eiq '^referrer-policy:[[:space:]]*no-referrer\r?$' "$headers_file"
-          grep -Eiq '^x-frame-options:[[:space:]]*DENY\r?$' "$headers_file"
-          grep -Fqi 'permissions-policy: camera=(), microphone=(), geolocation=()' "$headers_file"
-          grep -Fqi "content-security-policy: object-src 'none'; base-uri 'self'; frame-ancestors 'none'" "$headers_file"
+          python - "$headers_file" <<'PY'
+        import sys
+        from pathlib import Path
+
+        path = Path(sys.argv[1])
+        raw_text = path.read_text(errors="replace")
+        headers: dict[str, str] = {}
+        for raw_line in raw_text.splitlines():
+            if ":" not in raw_line:
+                continue
+            name, value = raw_line.split(":", 1)
+            headers[name.strip().lower()] = value.strip()
+
+        expected = {
+            "x-content-type-options": "nosniff",
+            "referrer-policy": "no-referrer",
+            "x-frame-options": "DENY",
+            "permissions-policy": "camera=(), microphone=(), geolocation=()",
+            "content-security-policy": "object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
+        }
+        mismatches = {
+            name: {"expected": value, "actual": headers.get(name)}
+            for name, value in expected.items()
+            if headers.get(name) != value
+        }
+        if mismatches:
+            print(f"security header mismatch in {path}: {mismatches}", file=sys.stderr)
+            print("--- captured response headers ---", file=sys.stderr)
+            print(raw_text, file=sys.stderr)
+            raise SystemExit(1)
+        PY
         }
         trap cleanup EXIT
 
