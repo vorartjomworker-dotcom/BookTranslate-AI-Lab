@@ -35,6 +35,38 @@ def test_sanitize_audit_details_redacts_nested_credentials_and_bounds_values() -
     assert len(details["long"]) == 1000
 
 
+def test_sanitize_audit_details_redacts_values_by_sensitive_mapping_key() -> None:
+    details = sanitize_audit_details(
+        {
+            "password": "raw-password-value",
+            "access_token": "raw-access-token-value",
+            "providerApiKey": "raw-provider-key-value",
+            "clientSecret": "raw-client-secret-value",
+            "headers": {"Authorization": "opaque-auth-value"},
+            "token_version": 7,
+            "tokens_used": 42,
+        }
+    )
+
+    assert details is not None
+    rendered = str(details)
+    for secret in (
+        "raw-password-value",
+        "raw-access-token-value",
+        "raw-provider-key-value",
+        "raw-client-secret-value",
+        "opaque-auth-value",
+    ):
+        assert secret not in rendered
+    assert details["password"] == "<redacted>"
+    assert details["access_token"] == "<redacted>"
+    assert details["providerApiKey"] == "<redacted>"
+    assert details["clientSecret"] == "<redacted>"
+    assert details["headers"]["Authorization"] == "<redacted>"
+    assert details["token_version"] == 7
+    assert details["tokens_used"] == 42
+
+
 def test_sanitize_audit_details_preserves_safe_operational_types() -> None:
     details = sanitize_audit_details(
         {
@@ -65,6 +97,7 @@ def test_audit_service_persists_only_sanitized_details(async_session_factory) ->
                     "model": "https://alice:db-password@example.test/model",
                     "message": "Authorization: Bearer audit-secret-token",
                     "nested": ["password=never-store-this", "safe-value"],
+                    "access_token": "never-store-keyed-token",
                 },
             )
             event_id = event.id
@@ -80,5 +113,6 @@ def test_audit_service_persists_only_sanitized_details(async_session_factory) ->
     assert "db-password" not in rendered
     assert "audit-secret-token" not in rendered
     assert "never-store-this" not in rendered
+    assert "never-store-keyed-token" not in rendered
     assert "safe-value" in rendered
     assert "<redacted>" in rendered
