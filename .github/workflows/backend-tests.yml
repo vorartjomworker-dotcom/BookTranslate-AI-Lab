@@ -60,13 +60,13 @@ jobs:
 
         values = {
             "CI_DB_USER": "booktranslate",
-            "CI_DB_PASSWORD": "booktranslate",
+            "CI_DB_PASSWORD": "booktranslate-ci-password",
             "CI_DB_NAME": "booktranslate_test",
         }
         env_file = Path(os.environ["GITHUB_ENV"])
         with env_file.open("a", encoding="utf-8") as handle:
+            print(f"::add-mask::{values['CI_DB_PASSWORD']}")
             for key, value in values.items():
-                print(f"::add-mask::{value}")
                 handle.write(f"{key}={value}\n")
 
     - name: Start PostgreSQL CI service
