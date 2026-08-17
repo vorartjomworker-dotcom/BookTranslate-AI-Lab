@@ -43,8 +43,8 @@ class SegmentUpdate(BaseModel):
     qa_status: Optional[str] = Field(default=None, max_length=50)
     qa_comment: Optional[str] = None
     translation_profile: Optional[str] = Field(default=None, min_length=1, max_length=50)
-    tokens_used: Optional[int] = Field(default=0, ge=0)
-    latency_ms: Optional[int] = Field(default=0, ge=0)
+    tokens_used: Optional[int] = Field(default=None, ge=0)
+    latency_ms: Optional[int] = Field(default=None, ge=0)
 
     model_config = ConfigDict(from_attributes=True)
 
