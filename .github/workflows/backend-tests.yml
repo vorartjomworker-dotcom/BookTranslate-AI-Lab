@@ -27,28 +27,18 @@ jobs:
 
     services:
       postgres:
-        image: postgres:17-alpine
+        image: postgres:17
         env:
           POSTGRES_DB: booktranslate_test
           POSTGRES_USER: booktranslate
           POSTGRES_PASSWORD: booktranslate
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U booktranslate -d booktranslate_test"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
         ports:
           - 5432:5432
-
-      redis:
-        image: redis:7-alpine
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 6379:6379
 
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -130,6 +120,27 @@ jobs:
         print("PostgreSQL CI logging hardened")
         PY
 
+    - name: Start clean Redis CI service
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo sysctl -w vm.overcommit_memory=1
+        cat >/tmp/booktranslate-redis-ci.conf <<'EOF'
+        bind 0.0.0.0
+        protected-mode no
+        port 6379
+        save ""
+        appendonly no
+        daemonize no
+        loglevel notice
+        EOF
+        docker run --detach \
+          --name booktranslate-ci-redis \
+          --publish 6379:6379 \
+          --volume /tmp/booktranslate-redis-ci.conf:/usr/local/etc/redis/redis.conf:ro \
+          redis:7-alpine \
+          redis-server /usr/local/etc/redis/redis.conf
+
     - name: Wait for Redis
       run: |
         python -c "
@@ -166,7 +177,7 @@ jobs:
         TRANSLATION_CONSUMER_NAME: translator-worker-1
         RUN_INTEGRATION_TESTS: "1"
 
-    - name: Verify PostgreSQL service logs stay metadata-only
+    - name: Verify PostgreSQL service logs stay metadata-only and healthcheck-clean
       if: always()
       run: |
         logs="$(docker logs "${{ job.services.postgres.id }}" 2>&1)"
@@ -174,7 +185,32 @@ jobs:
           echo "::error::PostgreSQL CI service logs contain row, statement, or credential material"
           exit 1
         fi
-        echo "PostgreSQL CI service logs are metadata-only"
+        if printf '%s' "$logs" | grep -Fq 'role "root" does not exist'; then
+          echo "::error::PostgreSQL CI healthcheck used the wrong database role"
+          exit 1
+        fi
+        if printf '%s' "$logs" | grep -Fq 'no usable system locales were found'; then
+          echo "::error::PostgreSQL CI image emitted the Alpine locale warning"
+          exit 1
+        fi
+        echo "PostgreSQL CI service logs are metadata-only and free of healthcheck/locale warning noise"
+
+    - name: Verify Redis CI startup logs are clean
+      if: always()
+      shell: bash
+      run: |
+        set -euo pipefail
+        if ! docker inspect booktranslate-ci-redis >/dev/null 2>&1; then
+          echo "::error::Redis CI container was not created"
+          exit 1
+        fi
+        logs="$(docker logs booktranslate-ci-redis 2>&1)"
+        if printf '%s' "$logs" | grep -Ei -q 'overcommit_memory|no config file specified|WARNING'; then
+          echo "::error::Redis CI startup logs contain warning noise"
+          printf '%s\n' "$logs"
+          exit 1
+        fi
+        echo "Redis CI startup logs are warning-free"
 
     - name: Check module imports
       working-directory: backend
@@ -184,3 +220,7 @@ jobs:
         python -c "from app.models import Book, Chapter, Segment; print('✓ models.py OK')"
         python -c "from app.core.config import settings; print('✓ config.py OK')"
         python -c "from alembic.config import Config; print('✓ alembic.config OK')"
+
+    - name: Stop Redis CI service
+      if: always()
+      run: docker rm --force booktranslate-ci-redis >/dev/null 2>&1 || true
