@@ -19,6 +19,7 @@ Implemented capabilities:
 - local email/password authentication with `viewer`, `editor`, and `admin` roles
 - Redis-backed login throttling, durable PostgreSQL account lockout, and durable security audit trail
 - optional fail-closed Redis TLS enforcement requiring `rediss://` when enabled, plus credential-safe Redis endpoint logging
+- mounted `*_FILE` secret injection for runtime credentials without placing secret values in container environment variables
 - immediate server-side access-token revocation through per-user token versions
 - operator CLI password recovery with lockout clearing and token revocation
 - structured JSON HTTP request logging and optional protected Prometheus metrics
@@ -89,6 +90,28 @@ REDIS_URL=rediss://:<password>@<redis-host>:6380/0
 ```
 
 When `REDIS_TLS_REQUIRED=true`, application settings fail closed unless `REDIS_URL` uses `rediss://`. Only `redis://` and `rediss://` schemes with a host are accepted. This policy does not provide a TLS server by itself; the configured Redis service must actually support TLS and present a certificate trusted by the runtime.
+
+### Production secret injection with mounted files
+
+Production orchestrators can mount sensitive values as read-only files and point the application at those files instead of exposing the secret value itself through a normal environment variable. Supported file-backed settings are:
+
+- `JWT_SECRET_FILE`
+- `DATABASE_URL_FILE`
+- `REDIS_URL_FILE`
+- `METRICS_BEARER_TOKEN_FILE`
+- `OPENAI_API_KEY_FILE`
+- `ANTHROPIC_API_KEY_FILE`
+- `DEEPL_API_KEY_FILE`
+
+Example for a Docker/Kubernetes-style mounted JWT secret:
+
+```bash
+JWT_SECRET_FILE=/run/secrets/booktranslate_jwt
+```
+
+The file contains only the secret value; a final newline is removed when read. Secret files are capped at 64 KiB and must resolve to regular files. Missing, unreadable, empty, non-file, or oversized secret sources make startup fail closed. Setting both the direct variable and its corresponding `*_FILE` variable is rejected instead of silently choosing one source, which prevents stale environment values from winning during a secret rotation.
+
+The base development `docker-compose.yml` intentionally continues to require direct `JWT_SECRET`, `POSTGRES_PASSWORD`, and `REDIS_PASSWORD`, because it provisions local PostgreSQL/Redis itself. For production, use an orchestrator/deployment override to mount secret files. `DATABASE_URL_FILE` and `REDIS_URL_FILE` can hold the complete externally managed connection URLs, and the ordinary Redis TLS validation still applies to a file-loaded Redis URL.
 
 Local endpoints:
 
@@ -307,7 +330,9 @@ GitHub Actions additionally runs PostgreSQL and Redis integration coverage and A
 
 The Docker Compose validation workflow verifies more than YAML syntax. It checks that:
 
-- `JWT_SECRET`, `POSTGRES_PASSWORD`, and `REDIS_PASSWORD` are required;
+- `JWT_SECRET`, `POSTGRES_PASSWORD`, and `REDIS_PASSWORD` are required for the base local Compose stack;
+- runtime settings can load a mounted `JWT_SECRET_FILE` inside the backend container without a direct `JWT_SECRET` value;
+- file-backed secret configuration fails closed on direct/file ambiguity and invalid secret files through backend regression tests;
 - Redis starts with `--requirepass` and application services derive their local Redis URL from the configured password;
 - backend and worker both receive `REDIS_TLS_REQUIRED`, while backend tests enforce that enabling it rejects plaintext `redis://` URLs and requires `rediss://`;
 - unauthenticated Redis `PING` does not succeed while authenticated `PING` returns `PONG`;
@@ -331,7 +356,7 @@ The repository is an advanced MVP / pre-production platform, not a finished prod
 - independent PR review before promotion to production;
 - self-service or email-mediated password recovery only if the deployment requires it; operator CLI recovery is available;
 - provisioning an actual TLS-capable or managed private Redis endpoint in production and enabling `REDIS_TLS_REQUIRED=true`; application-side fail-closed enforcement is available but local Compose does not provide a Redis TLS server;
-- production secret management rather than local `.env` files;
+- connecting the validated `*_FILE` interface to the deployment's actual secret store/orchestrator (Docker/Kubernetes/cloud secret CSI/injection); the application no longer requires runtime credential values to live in plaintext environment variables;
 - production backup scheduling, off-host encrypted retention, monitoring, and PITR if required by RPO/RTO targets;
 - centralized log aggregation, distributed tracing, dashboards, and alerting;
 - multi-tenant isolation if the product will host independent organizations.
