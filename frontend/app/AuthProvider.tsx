@@ -2,7 +2,7 @@
 
 import { Fragment, createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { setAccessToken, setUnauthorizedHandler } from './lib/api';
-import { login as apiLogin } from './lib/auth';
+import { login as apiLogin, logout as apiLogout } from './lib/auth';
 import type { AuthUser } from './lib/auth-types';
 
 type AuthContextValue = {
@@ -60,16 +60,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
+    // Disable the expiry callback before the revoke request so a 401 from an already
+    // expired/revoked token cannot turn an explicit logout into a session-expired dialog.
     hasSessionRef.current = false;
     pendingReauthRef.current = false;
     workspaceOwnerIdRef.current = null;
-    setAccessToken(null);
-    setSessionExpired(false);
-    setUser(null);
-    setStatus('unauthenticated');
-    // Change the keyed subtree so every workspace-local state value, ref, pending
-    // controller, selection and unsaved draft is discarded before another user logs in.
-    setWorkspaceVersion((current) => current + 1);
+
+    try {
+      // Best effort: when reachable, the backend increments token_version and revokes
+      // every outstanding access token for this user. Local logout must still complete
+      // if the network or backend is unavailable.
+      await apiLogout();
+    } catch {
+      // Intentionally ignored; client-side identity/workspace teardown is unconditional.
+    } finally {
+      setAccessToken(null);
+      setSessionExpired(false);
+      setUser(null);
+      setStatus('unauthenticated');
+      // Change the keyed subtree so every workspace-local state value, ref, pending
+      // controller, selection and unsaved draft is discarded before another user logs in.
+      setWorkspaceVersion((current) => current + 1);
+    }
   }, []);
 
   const reauthenticate = useCallback(() => {
