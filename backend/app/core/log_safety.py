@@ -5,7 +5,7 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
-_URL_USERINFO_RE = re.compile(r"(?P<scheme>[A-Za-z][A-Za-z0-9+.-]*://)(?P<userinfo>[^@\s/]+)@")
+_URL_USERINFO_RE = re.compile(r"(?P<scheme>[A-Za-z][A-Za-z0-9+.-]*://)(?P<userinfo>[^\s/]+)@")
 _BEARER_RE = re.compile(r"\bBearer\s+[^\s,;]+", re.IGNORECASE)
 _NAMED_SECRET_RE = re.compile(
     r"(?P<key>\b(?:password|passwd|pwd|token|api[_-]?key|secret|authorization)\b)"
