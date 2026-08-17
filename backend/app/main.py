@@ -110,6 +110,9 @@ async def add_request_id(request: Request, call_next):
         response.headers["X-Request-ID"] = request_id
         for name, value in _BASE_SECURITY_HEADERS.items():
             response.headers.setdefault(name, value)
+        if request.url.path == "/api/v1" or request.url.path.startswith("/api/v1/"):
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["Pragma"] = "no-cache"
         return response
     finally:
         status_code = response.status_code if response is not None else 500
