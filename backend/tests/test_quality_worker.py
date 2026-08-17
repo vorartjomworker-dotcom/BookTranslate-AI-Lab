@@ -31,7 +31,14 @@ async def test_worker_run_acks_completed_jobs(monkeypatch):
 
     async def fake_read_jobs():
         worker.should_exit = True
-        return [{"id": "msg-1", "payload": {"job_id": "1", "segment_id": "1", "provider": "openai"}}]
+        return [
+            {
+                "id": "msg-1",
+                "job_id": 1,
+                "segment_id": 1,
+                "payload": {"job_id": "1", "segment_id": "1", "provider": "openai"},
+            }
+        ]
 
     async def fake_reclaim_stale_jobs():
         return []
@@ -62,7 +69,14 @@ async def test_worker_run_does_not_ack_persistence_error(monkeypatch):
 
     async def fake_read_jobs():
         worker.should_exit = True
-        return [{"id": "msg-2", "payload": {"job_id": "2", "segment_id": "2", "provider": "openai"}}]
+        return [
+            {
+                "id": "msg-2",
+                "job_id": 2,
+                "segment_id": 2,
+                "payload": {"job_id": "2", "segment_id": "2", "provider": "openai"},
+            }
+        ]
 
     async def fake_reclaim_stale_jobs():
         return []
@@ -93,7 +107,14 @@ async def test_worker_run_propagates_cancelled_error(monkeypatch):
 
     async def fake_read_jobs():
         worker.should_exit = True
-        return [{"id": "msg-3", "payload": {"job_id": "3", "segment_id": "3", "provider": "openai"}}]
+        return [
+            {
+                "id": "msg-3",
+                "job_id": 3,
+                "segment_id": 3,
+                "payload": {"job_id": "3", "segment_id": "3", "provider": "openai"},
+            }
+        ]
 
     async def fake_process(*args, **kwargs):
         raise asyncio.CancelledError()
