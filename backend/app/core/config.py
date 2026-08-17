@@ -17,6 +17,7 @@ _SECRET_FILE_FIELDS: dict[str, str] = {
     "DEEPL_API_KEY": "deepl_api_key",
 }
 _MAX_SECRET_FILE_BYTES = 64 * 1024
+_LOOPBACK_CORS_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 
 def _read_secret_file_values(environ: Mapping[str, str] | None = None) -> dict[str, str]:
@@ -183,6 +184,44 @@ class Settings(BaseSettings):
         if self.redis_tls_required and urlsplit(self.redis_url).scheme.lower() != "rediss":
             raise ValueError("redis_url must use rediss:// when redis_tls_required is enabled")
         return self
+
+    @field_validator("cors_allowed_origins")
+    @classmethod
+    def validate_cors_allowed_origins(cls, value: list[str]) -> list[str]:
+        if not value:
+            raise ValueError("cors_allowed_origins must contain at least one exact origin")
+
+        normalized: list[str] = []
+        seen: set[tuple[str, str, int | None]] = set()
+        for raw_origin in value:
+            origin = raw_origin.strip()
+            if not origin or origin.lower() == "null" or "*" in origin:
+                raise ValueError("cors_allowed_origins must contain exact http(s) origins without wildcards")
+
+            try:
+                parsed = urlsplit(origin)
+                port = parsed.port
+            except ValueError as exc:
+                raise ValueError("cors_allowed_origins contains an invalid origin") from exc
+
+            scheme = parsed.scheme.lower()
+            hostname = (parsed.hostname or "").lower()
+            if scheme not in {"http", "https"} or not hostname:
+                raise ValueError("cors_allowed_origins must use http:// or https:// and include a host")
+            if parsed.username is not None or parsed.password is not None:
+                raise ValueError("cors_allowed_origins must not contain user information")
+            if parsed.path or parsed.query or parsed.fragment:
+                raise ValueError("cors_allowed_origins must not contain a path, query string, or fragment")
+            if scheme == "http" and hostname not in _LOOPBACK_CORS_HOSTS:
+                raise ValueError("non-loopback cors_allowed_origins must use https://")
+
+            key = (scheme, hostname, port)
+            if key in seen:
+                raise ValueError("cors_allowed_origins must not contain duplicate origins")
+            seen.add(key)
+            normalized.append(origin)
+
+        return normalized
 
     @field_validator("default_ai_provider")
     @classmethod
