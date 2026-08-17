@@ -20,6 +20,7 @@ router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 async def login(
     payload: LoginRequest,
     request: Request,
+    response: Response,
     db: AsyncSession = Depends(get_db),
 ) -> AccessTokenResponse:
     client_ip = request.client.host if request.client is not None else "unknown"
@@ -82,6 +83,8 @@ async def login(
     await db.commit()
 
     access_token, expires_in = await service.issue_tokens(user)
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
     return AccessTokenResponse(access_token=access_token, expires_in=expires_in, user=UserRead.model_validate(user))
 
 
