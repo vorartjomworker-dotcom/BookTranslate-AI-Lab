@@ -9,7 +9,7 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.log_safety import redact_sensitive_text
+from app.core.log_safety import is_sensitive_field_name, redact_sensitive_text
 from app.models import AuditEvent
 
 
@@ -47,7 +47,11 @@ def _sanitize_audit_detail(value: Any, *, depth: int = 0) -> Any:
                 sanitized["<truncated>"] = True
                 break
             safe_key = redact_sensitive_text(str(key))[:_MAX_AUDIT_DETAIL_KEY_LENGTH]
-            sanitized[safe_key] = _sanitize_audit_detail(item, depth=depth + 1)
+            sanitized[safe_key] = (
+                "<redacted>"
+                if is_sensitive_field_name(key)
+                else _sanitize_audit_detail(item, depth=depth + 1)
+            )
         return sanitized
     if isinstance(value, (list, tuple)):
         sanitized_items = [
