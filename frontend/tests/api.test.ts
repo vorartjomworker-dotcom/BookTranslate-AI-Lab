@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, request, setAccessToken, setUnauthorizedHandler } from '../app/lib/api';
+import { ApiError, getAccessToken, request, setAccessToken, setUnauthorizedHandler } from '../app/lib/api';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -83,5 +83,26 @@ describe('typed API client', () => {
 
     expect(error.message).toBe('Your session has expired. Please log in again.');
     expect(unauthorizedHandler).toHaveBeenCalledOnce();
+  });
+
+  it('does not let a delayed 401 from a stale bearer request tear down a newer session', async () => {
+    const unauthorizedHandler = vi.fn();
+    let resolveFetch: (response: Response) => void = () => undefined;
+    const delayedResponse = new Promise<Response>((resolve) => {
+      resolveFetch = resolve;
+    });
+
+    setAccessToken('old-session-token');
+    setUnauthorizedHandler(unauthorizedHandler);
+    vi.stubGlobal('fetch', vi.fn().mockReturnValue(delayedResponse));
+
+    const pending = request<never>('/api/v1/books').catch((value) => value as ApiError);
+    setAccessToken('new-session-token');
+    resolveFetch(new Response(JSON.stringify({ code: 'unauthorized', message: 'Invalid or expired token.', details: {}, request_id: 'req-stale' }), { status: 401 }));
+
+    const error = await pending;
+    expect(error.message).toBe('Your session has expired. Please log in again.');
+    expect(unauthorizedHandler).not.toHaveBeenCalled();
+    expect(getAccessToken()).toBe('new-session-token');
   });
 });
