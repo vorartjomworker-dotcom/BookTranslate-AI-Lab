@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit import AuditService, audit_hash
@@ -83,6 +83,28 @@ async def login(
 
     access_token, expires_in = await service.issue_tokens(user)
     return AccessTokenResponse(access_token=access_token, expires_in=expires_in, user=UserRead.model_validate(user))
+
+
+@router.post("/logout", status_code=204)
+async def logout(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Immediately revoke every outstanding access token for the authenticated user."""
+    service = AuthService(db)
+    new_version = await service.revoke_all_access_tokens(user.id)
+    await AuditService(db).record(
+        action="auth.logout",
+        outcome="success",
+        actor_user_id=user.id,
+        target_type="user",
+        target_id=user.id,
+        request_id=getattr(request.state, "request_id", None),
+        details={"scope": "all_access_tokens", "token_version": new_version},
+    )
+    await db.commit()
+    return Response(status_code=204)
 
 
 @router.get("/me", response_model=UserRead)
